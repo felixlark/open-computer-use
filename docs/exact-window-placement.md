@@ -19,7 +19,10 @@ An explicit ID never launches an app, selects a current/title-matched fallback,
 activates it, raises it or silently switches to a parent. Its AX window must
 belong to the running process. An explicit sheet cannot be parked: obtain and
 confirm its parent ID instead. A PID or window mismatch fails before movement.
-The normal blocked-app policy still applies to numeric PIDs.
+The normal blocked-app policy still applies to numeric PIDs. Recovery ownership
+is recorded before sending the move: an AX error can arrive after delivery. OCU
+reads back its position without repeating the move. An unresolved error retains
+the recovery record; inspect that exact window before restoring or releasing it.
 
 ## Native calls
 
@@ -83,6 +86,8 @@ do not silently fall back to global keyboard/mouse or activation.
 Virtual display creation remains opt-in. With
 `virtualDisplay.restoreOnSessionEnd=false`, registered windows and their pins
 survive turn boundaries and client disconnects on the same app-agent namespace.
+Once requested, that persistent display also survives an empty window registry
+until its owner exits; a later transient client cannot silently dismantle it.
 Pins bind the PID, launch date and original AX window; replacement/gone/unknown
 identities are never written during cleanup.
 

@@ -36,6 +36,19 @@ final class ExactWindowPlacementTests: XCTestCase {
         }
     }
 
+    func testPersistentWorkspaceSurvivesEmptyRecordsAndLaterTransientClients() {
+        var retention = AgentDisplayRetention()
+        XCTAssertFalse(retention.untilOwnerExit)
+        retention.recordPark(restoreOnSessionEnd: true)
+        XCTAssertFalse(retention.untilOwnerExit)
+        retention.recordPark(restoreOnSessionEnd: false)
+        XCTAssertTrue(retention.untilOwnerExit)
+        // Disconnect prunes closed window records and restores request env.
+        // A later client's transient preference cannot delete that workspace.
+        retention.recordPark(restoreOnSessionEnd: true)
+        XCTAssertTrue(retention.untilOwnerExit)
+    }
+
     func testReleasedAndUnknownDisplayOccupancyKeepsScreenAlive() {
         let screen = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
         XCTAssertTrue(agentDisplayHasOccupants(windowFrames: nil, displayBounds: screen))

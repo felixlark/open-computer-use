@@ -54,6 +54,16 @@ func agentDisplayHasOccupants(windowInfo: [[String: Any]]?, displayBounds: CGRec
     return agentDisplayHasOccupants(windowFrames: frames, displayBounds: displayBounds)
 }
 
+/// Once a persistent workspace has been requested, keep its display until the
+/// owner exits, even after all window records are pruned. Request/session
+/// environment restoration must not turn that decision back into auto-destroy.
+struct AgentDisplayRetention {
+    private(set) var untilOwnerExit = false
+    mutating func recordPark(restoreOnSessionEnd: Bool) {
+        untilOwnerExit = untilOwnerExit || !restoreOnSessionEnd
+    }
+}
+
 /// Where a parked window goes on the agent display: inset from the top-left
 /// corner, clamped so at least the top-left `minVisible` points stay inside the
 /// display when the window is larger than it.
@@ -119,6 +129,7 @@ final class AgentDisplay: @unchecked Sendable {
     private(set) var displaySpaceIDs: Set<UInt64> = []
     private var parked: [CGWindowID: ParkedWindow] = [:]
     private var exitHookInstalled = false
+    private var retention = AgentDisplayRetention()
 
     var isSupported: Bool {
         ocu_virtual_display_is_supported() != 0
@@ -154,9 +165,15 @@ final class AgentDisplay: @unchecked Sendable {
         }
         if var existing = parked[windowID] {
             if existing.pid == pid, existing.processLaunchDate == launchDate, CFEqual(existing.element, window) {
+                let bounds = try ensureDisplay()
+                guard let frame = Self.windowFrame(windowID),
+                      bounds.contains(CGPoint(x: frame.minX + 1, y: frame.minY + 1)) else {
+                    throw ComputerUseError.stateUnavailable("Existing placement is not on the agent display; inspect this exact window, then restore or release before parking again")
+                }
                 existing.restoreOnSessionEnd = config.restoreOnSessionEnd
                 parked[windowID] = existing
-                return try ensureDisplay()
+                retention.recordPark(restoreOnSessionEnd: config.restoreOnSessionEnd)
+                return bounds
             }
             parked.removeValue(forKey: windowID)
             WindowOcclusionKeepAlive.shared.forget(windowIDs: [windowID])
@@ -172,11 +189,23 @@ final class AgentDisplay: @unchecked Sendable {
         let bounds = try ensureDisplay()
         let target = agentDisplayPlacement(windowSize: size, displayBounds: bounds)
         let start = TimingLog.now()
-        try setAXPosition(window, target)
+        // AX may time out after delivering a move. Own the original recovery
+        // position before sending it, including an uncertain/error outcome.
         parked[windowID] = ParkedWindow(pid: pid, element: window, originalPosition: position,
                                       originalDisplayID: originalDisplay?.id, originalDisplayBounds: originalDisplay?.bounds,
                                       processLaunchDate: launchDate, restoreOnSessionEnd: config.restoreOnSessionEnd)
+        retention.recordPark(restoreOnSessionEnd: config.restoreOnSessionEnd)
         installExitHookIfNeeded()
+        do {
+            try setAXPosition(window, target)
+        } catch {
+            // Read back an uncertain AX result; never send the move twice.
+            let settled = waitUntil(timeout: Self.moveSettle) {
+                guard let frame = Self.windowFrame(windowID) else { return false }
+                return Self.isRestored(frame: frame, to: target)
+            }
+            guard settled != nil else { throw error }
+        }
         waitForWindow(windowID, toLandOn: displaySpaceIDs, or: bounds)
         TimingLog.log("agent_display.park", since: start)
         return bounds
@@ -444,7 +473,7 @@ final class AgentDisplay: @unchecked Sendable {
     }
 
     private func destroyDisplayIfIdle() {
-        guard parked.isEmpty, let bounds = displayBounds else { return }
+        guard !retention.untilOwnerExit, parked.isEmpty, let bounds = displayBounds else { return }
         let rows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         guard !agentDisplayHasOccupants(windowInfo: rows, displayBounds: bounds) else { return }
         destroyDisplay()
