@@ -112,12 +112,13 @@ public enum ToolDefinitions {
                 properties: [
                     "include_ax": ["type": "boolean", "default": true, "description": "Include accessibility tree, focus and selection. False skips collection and invalidates previous element indexes; read AX again before element actions."],
                     "include_screenshot": ["type": "boolean", "default": true, "description": "Capture and return a screenshot. False skips capture and encoding; screenshot-coordinate actions require a fresh screenshot."],
-                    "app": stringProperty(description: "App name or bundle identifier"),
+                    "app": stringProperty(description: "App name, bundle identifier, or exact running PID string"),
+                    "window_id": positiveIntegerProperty(description: "macOS: exactly this current CGWindowID (1–4294967295) for keep, agent_display, restore or release. No focused-window, title, activation or app-launch fallback. release requires an explicit ID and forgets only that recovery entry without moving the window; inspect its receipt."),
                     "text_limit": textLimitProperty(description: "Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
                     "max_tree_nodes": positiveIntegerProperty(description: "Maximum accessibility tree nodes to render. Defaults to 1200."),
                     "max_tree_depth": positiveIntegerProperty(description: "Maximum accessibility tree depth to render. Defaults to 64."),
                     "window_placement": stringProperty(
-                        description: "keep (default) leaves the window where it is. agent_display (macOS) parks the app's window on an invisible display owned by the agent so a covered or other-Space window renders, exposes its full tree and accepts input without touching the user's Space, focus or pointer; the window disappears from the user's desktop until restore or process exit. restore puts it back.",
+                        description: "keep (default) leaves the window where it is. agent_display (macOS) parks the app's window on an invisible display owned by the agent so a covered or other-Space window renders, exposes its full tree and accepts input without touching the user's Space, focus or pointer; the window disappears from the user's desktop until restore or process exit. restore puts it back. With window_id, only that exact window is restored. release with window_id relinquishes recovery ownership without moving it; it returns a lifecycle receipt instead of a snapshot.",
                         enumValues: WindowPlacement.allCases.map(\.rawValue)
                     ),
                 ],

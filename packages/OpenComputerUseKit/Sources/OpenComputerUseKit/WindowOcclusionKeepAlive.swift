@@ -59,7 +59,8 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
     private let lock = NSLock()
     /// Preserve the state reported by the SPI so cleanup does not enable
     /// notifications that another owner had already disabled.
-    private var frozenWindowPreviousStates: [CGWindowID: Bool] = [:]
+    private struct Pin { let previousState: Bool; let identity: WindowOcclusionIdentity }
+    private var frozenWindowPreviousStates: [CGWindowID: Pin] = [:]
     private var exitHookInstalled = false
 
     /// Returns `true` when the window's visible state is pinned (now or already).
@@ -67,6 +68,7 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
     func keepVisible(
         windowID: CGWindowID,
         bounds: CGRect,
+        identity suppliedIdentity: WindowOcclusionIdentity? = nil,
         spi: any WindowOcclusionControlling = SkyLightSPI.shared
     ) -> Bool {
         guard spi.occlusionCapability.isAvailable else {
@@ -78,15 +80,21 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
             lock.unlock()
         }
 
-        if frozenWindowPreviousStates[windowID] != nil {
-            return true
+        if let old = frozenWindowPreviousStates[windowID] {
+            switch old.identity.isCurrent() {
+            case true?: return true
+            case false?: frozenWindowPreviousStates.removeValue(forKey: windowID)
+            case nil: return false
+            }
         }
+        guard let identity = suppliedIdentity ?? WindowOcclusionIdentity.capture(windowID: windowID),
+              identity.isCurrent() == true else { return false }
         guard windowLooksUnoccluded(bounds: bounds, coveringBounds: coveringWindowBounds(above: windowID)) else {
             return false
         }
         do {
             let previousState = try spi.setWindowOcclusionNotificationsEnabled(false, windowID: windowID)
-            frozenWindowPreviousStates[windowID] = previousState
+            frozenWindowPreviousStates[windowID] = Pin(previousState: previousState, identity: identity)
         } catch {
             return false
         }
@@ -105,15 +113,34 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
     func releaseAll(excluding retainedWindowIDs: Set<CGWindowID> = [], spi: any WindowOcclusionControlling = SkyLightSPI.shared) {
         lock.lock()
         defer { lock.unlock() }
-        for (windowID, previousState) in Array(frozenWindowPreviousStates) {
+        for (windowID, pin) in Array(frozenWindowPreviousStates) {
             guard !retainedWindowIDs.contains(windowID) else { continue }
+            switch pin.identity.isCurrent() {
+            case false?: frozenWindowPreviousStates.removeValue(forKey: windowID); continue
+            case nil: continue
+            case true?: break
+            }
             do {
-                try spi.setWindowOcclusionNotificationsEnabled(previousState, windowID: windowID)
+                try spi.setWindowOcclusionNotificationsEnabled(pin.previousState, windowID: windowID)
                 frozenWindowPreviousStates.removeValue(forKey: windowID)
             } catch {
-                // Retain failed entries so a later cleanup can retry.
+                // Retry only while the original process and AX identity remain live.
             }
         }
+    }
+
+    /// Explicit relinquishment is one-shot: discard even a failed reset, so it
+    /// cannot later mutate a window after control was handed to the user.
+    @discardableResult
+    func release(windowID: CGWindowID, spi: any WindowOcclusionControlling = SkyLightSPI.shared) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let pin = frozenWindowPreviousStates.removeValue(forKey: windowID) else { return true }
+        guard pin.identity.isCurrent() == true else { return false }
+        do {
+            try spi.setWindowOcclusionNotificationsEnabled(pin.previousState, windowID: windowID)
+            return true
+        } catch { return false }
     }
 
     /// A closed/replaced window no longer owns the ID. Do not apply its saved

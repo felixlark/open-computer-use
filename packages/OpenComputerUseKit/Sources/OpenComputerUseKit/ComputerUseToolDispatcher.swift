@@ -77,6 +77,7 @@ public final class ComputerUseToolDispatcher {
                     maxDepth: try optionalPositiveInt("max_tree_depth", in: arguments)
                 ),
                 windowPlacement: try parseWindowPlacement(optionalString("window_placement", in: arguments)),
+                windowID: try validatedQueryWindowID(arguments["window_id"]),
                 observation: SnapshotObservationOptions(
                     includeAX: try strictObservationBool("include_ax", in: arguments),
                     includeScreenshot: try strictObservationBool("include_screenshot", in: arguments)

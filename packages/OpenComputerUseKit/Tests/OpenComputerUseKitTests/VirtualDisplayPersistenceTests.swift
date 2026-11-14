@@ -92,8 +92,8 @@ final class VirtualDisplayPersistenceTests: XCTestCase {
         }
         let pins = WindowOcclusionKeepAlive(), spi = FakeSPI()
         let bounds = CGRect(x: -20000, y: -20000, width: 10, height: 10)
-        XCTAssertTrue(pins.keepVisible(windowID: 101, bounds: bounds, spi: spi))
-        XCTAssertTrue(pins.keepVisible(windowID: 102, bounds: bounds, spi: spi))
+        XCTAssertTrue(pins.keepVisible(windowID: 101, bounds: bounds, identity: WindowOcclusionIdentity(validate: { true }), spi: spi))
+        XCTAssertTrue(pins.keepVisible(windowID: 102, bounds: bounds, identity: WindowOcclusionIdentity(validate: { true }), spi: spi))
         pins.releaseAll(excluding: [101], spi: spi)
         XCTAssertTrue(pins.isPinned(windowID: 101))
         XCTAssertFalse(pins.isPinned(windowID: 102))

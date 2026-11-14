@@ -146,7 +146,17 @@ enum AppDiscovery {
         if let bundleIdentifier = blockedBundleIdentifier(forQuery: query) {
             throw AppSafetyPolicy.permissionDenied(bundleIdentifier: bundleIdentifier)
         }
-        guard let app = resolvedRunningApp(in: applications ?? runningApps(), matching: query) else {
+        let descriptors = applications ?? runningApps()
+        if let pid = Int32(query) {
+            guard pid > 0, let app = descriptors.first(where: { $0.pid == pid }) else {
+                throw ComputerUseError.appNotFound(query)
+            }
+            if let bundle = app.bundleIdentifier, AppSafetyPolicy.isBlocked(bundleIdentifier: bundle) {
+                throw AppSafetyPolicy.permissionDenied(bundleIdentifier: bundle)
+            }
+            return app
+        }
+        guard let app = resolvedRunningApp(in: descriptors, matching: query) else {
             throw ComputerUseError.appNotFound(query)
         }
         return app

@@ -193,10 +193,12 @@ enum SnapshotBuilder {
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation,
+        windowID: CGWindowID? = nil,
         observation: SnapshotObservationOptions = .defaults
     ) throws -> AppSnapshot {
         try observation.validate()
         if app.name == FixtureBridge.appName, let fixtureState = try FixtureBridge.readState() {
+            guard windowID == nil else { throw ComputerUseError.invalidArguments("window_id is not supported for fixture snapshots") }
             return buildFixtureSnapshot(app: app, state: fixtureState, observation: observation)
         }
 
@@ -212,6 +214,17 @@ enum SnapshotBuilder {
             || appHasLazyWebAccessibility(bundleURL: app.runningApplication.bundleURL))
         let systemWide = AXUIElementCreateSystemWide()
         var focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
+        if let windowID {
+            let target = try resolveTargetWindow(for: app, windowID: windowID)
+            guard let capture = WindowCapture.resolve(for: app.pid, exactWindowID: windowID, capture: observation.includeScreenshot) else {
+                throw ComputerUseError.stateUnavailable("Requested window_id \(windowID) is unavailable; no other window was selected")
+            }
+            return buildAccessibilitySnapshot(app: app, appElement: appElement, rootElement: target.windowElement,
+                windowTitle: stringValue(of: target.windowElement, attribute: kAXTitleAttribute),
+                windowCapture: capture, focusedApplication: focusedApplication, systemWide: systemWide,
+                textLimit: textLimit, treeLimits: treeLimits, lazyWebAccessibility: lazyWebAccessibility,
+                observation: observation)
+        }
         var focusedWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
         if focusedWindow == nil,
            recoveryPolicy == .allowActivation,
@@ -305,7 +318,9 @@ enum SnapshotBuilder {
         // Pin the window's visible state (WindowServer occlusion notifications
         // off) so covering it or moving it to another Space later does not hide
         // its content. Only possible while it is currently unoccluded.
-        let pinned = WindowOcclusionKeepAlive.shared.keepVisible(windowID: windowCapture.windowID, bounds: windowBounds)
+        let pinned = WindowOcclusionKeepAlive.shared.keepVisible(windowID: windowCapture.windowID, bounds: windowBounds,
+            identity: WindowOcclusionIdentity(windowID: windowCapture.windowID, pid: app.pid,
+                launchDate: app.runningApplication.launchDate, element: rootElement))
 
         // Engines that accept AXManualAccessibility build their web tree lazily
         // and drop it while hidden. Re-walk briefly while the window is visible;

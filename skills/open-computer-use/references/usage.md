@@ -337,3 +337,10 @@ Pause and ask the user before actions that affect external systems or sensitive 
 ## Persisted screenshot settings
 
 Use `ocu config` to inspect effective values and their sources. `ocu config set image.format jpg` or `ocu config set image.maxLongEdgePixels 1024` persists macOS screenshot preferences in the user config file. ENV overrides take precedence; `ocu config reset KEY` removes a saved preference. Windows/Linux screenshot behavior is unchanged.
+
+### Exact macOS window ownership
+
+For applications shared with a human, bind with `initialState: false` and pass
+`windowId` with `windowPlacement` to `getAXState`. Native `get_app_state` uses
+`window_id`; `release` drops one registration without moving the window. Verify
+the actual runtime schema first. See [exact placement](../../../docs/exact-window-placement.md).

@@ -39,7 +39,7 @@ The runtime exposes an asynchronous app-bound API:
 - \`await cua.listApps({ emit? })\`: list current apps.
 - \`await cua.getApp(nameOrBundleID, { initialState? })\`: bind an app; initialState defaults to true. Use false for a lightweight binding before query.
 - \`await app.query({ text?, role?, exact?, limit?, maxNodes?, windowId? })\`: macOS-only AX lookup; returns matches and truncation metadata, with indexes usable in this native session.
-- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement? })\`
+- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowId?, windowPlacement? })\`
 - \`await app.getScreenshot({ emit? })\`
 - \`await app.getAXStateAndScreenshot(options?)\`
 - Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. Omitted options retain full native observation.
@@ -65,7 +65,7 @@ export function virtualDisplayEnabled(environment = process.env, platform = proc
 export function computerUseGuidance(environment = process.env, platform = process.platform) {
   return virtualDisplayEnabled(environment, platform)
     ? COMPUTER_USE_GUIDANCE
-    : COMPUTER_USE_GUIDANCE.replace(", windowPlacement?", "");
+    : COMPUTER_USE_GUIDANCE.replace(", windowId?, windowPlacement?", "");
 }
 
 function asError(error) {
@@ -273,6 +273,12 @@ function optionsToSnapshotArgs(options = {}) {
   if (options.textLimit !== undefined) args.text_limit = options.textLimit;
   if (options.maxTreeNodes !== undefined) args.max_tree_nodes = options.maxTreeNodes;
   if (options.maxTreeDepth !== undefined) args.max_tree_depth = options.maxTreeDepth;
+  if (options.windowId !== undefined) {
+    if (process.platform !== "darwin") throw new Error("windowId is macOS-only");
+    if (!Number.isInteger(options.windowId) || options.windowId <= 0 || options.windowId > 4294967295) throw new Error("windowId must be a positive UInt32");
+    args.window_id = options.windowId;
+  }
+  if (options.windowPlacement === "release" && options.windowId === undefined) throw new Error("release requires windowId");
   if (options.windowPlacement !== undefined) {
     if (options.windowPlacement === "agent_display" && !virtualDisplayEnabled()) {
       throw new Error("windowPlacement 'agent_display' is disabled by virtualDisplay.enabled");
