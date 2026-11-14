@@ -27,20 +27,23 @@ final class MCPAppRuntime: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         turnEndedObserver = DistributedNotificationCenter.default().addObserver(
-            forName: openComputerUseTurnEndedNotificationName,
+            forName: currentOpenComputerUseTurnEndedNotification,
             object: nil,
             queue: .main
         ) { _ in
-            Task { @MainActor in
+            // Tools can synchronously require the main queue while holding the
+            // state transaction. Never wait for that transaction on main.
+            DispatchQueue.global(qos: .userInitiated).async {
                 resetOpenComputerUseBackgroundWindowState()
-                resetOpenComputerUseVisualCursor()
+                Task { @MainActor in resetOpenComputerUseVisualCursor() }
             }
         }
         Thread.detachNewThreadSelector(#selector(processStandardIO), toTarget: self, with: nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        resetOpenComputerUseBackgroundWindowState()
+        // Process-exit hooks restore placement/pins. Do not block main behind
+        // an in-flight tool that may still need the main queue.
         if let turnEndedObserver {
             DistributedNotificationCenter.default().removeObserver(turnEndedObserver)
         }

@@ -22,6 +22,10 @@ int ocu_virtual_display_is_supported(void) {
 }
 
 uint32_t ocu_virtual_display_create(const char *name, uint32_t width, uint32_t height, double refresh_rate, void **handle_out) {
+    return ocu_virtual_display_create_with_serial(name, width, height, refresh_rate, 1, handle_out);
+}
+
+uint32_t ocu_virtual_display_create_with_serial(const char *name, uint32_t width, uint32_t height, double refresh_rate, uint32_t serial_number, void **handle_out) {
     if (handle_out == NULL || !ocu_virtual_display_is_supported()) {
         return 0;
     }
@@ -43,7 +47,7 @@ uint32_t ocu_virtual_display_create(const char *name, uint32_t width, uint32_t h
             [descriptor setValue:[NSValue valueWithSize:NSMakeSize(width * 0.26, height * 0.26)] forKey:@"sizeInMillimeters"];
             [descriptor setValue:@(0x0CAC) forKey:@"productID"];
             [descriptor setValue:@(0x0CAC) forKey:@"vendorID"];
-            [descriptor setValue:@(1) forKey:@"serialNum"];
+            [descriptor setValue:@(serial_number) forKey:@"serialNum"];
             [descriptor setValue:dispatch_get_main_queue() forKey:@"queue"];
 
             id<OCUVirtualDisplay> display = [[displayClass alloc] initWithDescriptor:descriptor];

@@ -4,7 +4,9 @@ import Foundation
 /// requires an explicit host setting in addition to the tool argument.
 struct VirtualDisplayConfig: Equatable {
     static let environmentKey = "OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED"
+    static let restoreEnvironmentKey = "OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END"
     var enabled = false
+    var restoreOnSessionEnd = true
 
     static var current: VirtualDisplayConfig {
         let environment = OCUConfiguration.environment
@@ -24,22 +26,27 @@ struct VirtualDisplayConfig: Equatable {
     }
 
     static func resolve(document: [String: Any], environment: [String: String], warning: (String) -> Void = { _ in }) -> VirtualDisplayConfig {
-        if let value = environment[environmentKey] {
-            if value == "true" || value == "false" { return VirtualDisplayConfig(enabled: value == "true") }
-            warning("Invalid \(environmentKey); disabling virtual displays")
-            return VirtualDisplayConfig()
+        let section = document["virtualDisplay"] as? [String: Any] ?? [:]
+        if document["virtualDisplay"] != nil && document["virtualDisplay"] as? [String: Any] == nil {
+            warning("Invalid virtualDisplay config; using defaults")
         }
-        guard let section = document["virtualDisplay"] else { return VirtualDisplayConfig() }
-        guard let section = section as? [String: Any] else {
-            warning("Invalid virtualDisplay config; disabling virtual displays")
-            return VirtualDisplayConfig()
+        func boolean(_ key: String, environmentKey: String, default fallback: Bool) -> Bool {
+            if let value = environment[environmentKey] {
+                if value == "true" || value == "false" { return value == "true" }
+                warning("Invalid \(environmentKey); using default \(fallback)")
+                return fallback
+            }
+            guard let value = section[key] else { return fallback }
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                warning("Invalid virtualDisplay.\(key); using default \(fallback)")
+                return fallback
+            }
+            return number.boolValue
         }
-        guard let value = section["enabled"] else { return VirtualDisplayConfig() }
-        guard let boolean = value as? NSNumber, CFGetTypeID(boolean) == CFBooleanGetTypeID() else {
-            warning("Invalid virtualDisplay.enabled; disabling virtual displays")
-            return VirtualDisplayConfig()
-        }
-        return VirtualDisplayConfig(enabled: boolean.boolValue)
+        return VirtualDisplayConfig(
+            enabled: boolean("enabled", environmentKey: environmentKey, default: false),
+            restoreOnSessionEnd: boolean("restoreOnSessionEnd", environmentKey: restoreEnvironmentKey, default: true)
+        )
     }
 
     func requireEnabled() throws {

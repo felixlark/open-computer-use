@@ -192,13 +192,15 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         turnEndedObserver = DistributedNotificationCenter.default().addObserver(
-            forName: openComputerUseTurnEndedNotificationName,
+            forName: openComputerUseTurnEndedNotification(forSocketFileName: URL(fileURLWithPath: socketPath).lastPathComponent),
             object: nil,
             queue: .main
         ) { _ in
-            Task { @MainActor in
+            // Disconnect/Stop cleanup must serialize with tools off main;
+            // a tool holding the transaction may itself need the main queue.
+            DispatchQueue.global(qos: .userInitiated).async {
                 resetOpenComputerUseBackgroundWindowState()
-                resetOpenComputerUseVisualCursor()
+                Task { @MainActor in resetOpenComputerUseVisualCursor() }
             }
         }
 
@@ -213,7 +215,8 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        resetOpenComputerUseBackgroundWindowState()
+        // Exit hooks perform final restoration without waiting on main for an
+        // in-flight tool's transaction.
         if let turnEndedObserver {
             DistributedNotificationCenter.default().removeObserver(turnEndedObserver)
         }
@@ -584,7 +587,9 @@ private enum AppAgentEnvironment {
             }
         }
 
-        return try body()
+        // CLI snapshot calls the service directly; include it as well as MCP
+        // dispatch in the same transaction as disconnect/Stop pin cleanup.
+        return try BackgroundWindowStateTransaction.perform { try body() }
     }
 }
 

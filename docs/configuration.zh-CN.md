@@ -7,7 +7,8 @@
 ```json
 {
   "virtualDisplay": {
-    "enabled": false
+    "enabled": false,
+    "restoreOnSessionEnd": true
   },
   "image": {
     "format": "png",
@@ -70,5 +71,20 @@ Windows/Linux 始终不暴露这个参数。
 
 创建虚拟显示器会增加系统显示器，可能影响已有显示器布局。关闭使用
 `ocu config set virtualDisplay.enabled false`，同时移除启用它的环境变量；重新连接 MCP
-客户端以刷新缓存的 schema。已停放窗口仍可用显式 `restore` 或 `turn-ended`/连接清理恢复，
-关闭配置不会直接销毁仍承载窗口的显示器。升级后需重启旧版常驻进程。
+客户端以刷新缓存的 schema。已停放窗口仍可用显式 `restore` 恢复；默认情况下，
+`turn-ended`/连接清理也会恢复。关闭创建不会直接销毁仍承载窗口的显示器。
+升级后需重启旧版常驻进程。
+
+独立 Agent 工作区可设 `virtualDisplay.restoreOnSessionEnd=false`，命令为
+`ocu config set virtualDisplay.restoreOnSessionEnd false`，环境变量为
+`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END=false`。该值在每次停放时记录；
+窗口位置和遮挡状态由常驻 macOS app-agent 持有，跨回合结束、CLI/MCP 断连保留。
+新客户端仍须先取新快照；再次停放会采用新配置并保留原始位置。
+
+显式 `window_placement=restore` 会归还该 App 的停放窗口；真正退出后台进程时也会尽力恢复。
+这不保证崩溃、注销或重启后的隐藏状态。后续清理会移除已关闭或替换的目标；身份未核清时
+保留恢复记录。独立进程直接退出时无法继续持有显示器。
+
+回合结束广播通知名称按 app-agent socket 命名空间隔离。CLI Stop hook 与 MCP 启动器应设置
+相同的 `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE`；后台进程从实际 socket 路径派生监听名，
+不会依赖 LaunchServices 是否继承客户端环境。带命名空间的 hook 不广播给旧版默认实例。
