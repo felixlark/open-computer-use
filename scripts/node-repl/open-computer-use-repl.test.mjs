@@ -474,3 +474,24 @@ test("disabled virtual displays reject stale JS options before native dispatch",
   assert.equal(restored.isError, false);
   assert.equal(native.calls.at(-1).arguments.window_placement, "restore");
 });
+
+test("exact window snapshot/release options are scoped and validated before native delivery", async t => {
+  if (process.platform !== "darwin") { t.skip("exact native windows are macOS-only"); return; }
+  const native = mockNative();
+  const session = new PersistentJavaScriptSession({ native });
+  const result = await session.run(`
+    var exactApp = await cua.getApp("Text", { initialState: false });
+    await exactApp.getAXState({ emit: false, windowId: 123, windowPlacement: "release" });
+  `);
+  assert.equal(result.isError, false);
+  assert.deepEqual(native.calls.find(c => c.name === "get_app_state").arguments,
+    { app: "Text", window_id: 123, window_placement: "release" });
+  const count = native.calls.length;
+  for (const value of [0, -1, 1.5, 4294967296, "123"]) {
+    const bad = await session.run(`await exactApp.getAXState({ windowId: ${JSON.stringify(value)}, emit: false })`);
+    assert.equal(bad.isError, true);
+  }
+  const absent = await session.run('await exactApp.getAXState({ windowPlacement: "release", emit: false })');
+  assert.equal(absent.isError, true);
+  assert.equal(native.calls.length, count);
+});

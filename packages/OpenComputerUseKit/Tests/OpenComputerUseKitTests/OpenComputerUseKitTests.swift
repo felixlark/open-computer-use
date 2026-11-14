@@ -2042,7 +2042,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         for name in ["get_app_state"] {
             let tool = ToolDefinitions.configured(virtualDisplayEnabled: true).first { $0.name == name }
             let properties = tool?.inputSchema["properties"] as? [String: Any]
-            XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore"])
+            XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore", "release"])
         }
     }
 
@@ -2090,8 +2090,8 @@ final class OpenComputerUseKitTests: XCTestCase {
         let keepAlive = WindowOcclusionKeepAlive()
         let spi = FakeOcclusionSPI()
         let visibleBounds = CGRect(x: 10, y: 10, width: 100, height: 100)
-        XCTAssertTrue(keepAlive.keepVisible(windowID: 101, bounds: visibleBounds, spi: spi))
-        XCTAssertTrue(keepAlive.keepVisible(windowID: 102, bounds: visibleBounds, spi: spi))
+        XCTAssertTrue(keepAlive.keepVisible(windowID: 101, bounds: visibleBounds, identity: WindowOcclusionIdentity(validate: { true }), spi: spi))
+        XCTAssertTrue(keepAlive.keepVisible(windowID: 102, bounds: visibleBounds, identity: WindowOcclusionIdentity(validate: { true }), spi: spi))
         XCTAssertEqual(spi.states[101], false)
         XCTAssertEqual(spi.states[102], false)
 

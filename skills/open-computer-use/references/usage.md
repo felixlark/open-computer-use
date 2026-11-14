@@ -258,7 +258,7 @@ enable this setting on the user's behalf without their request: it adds a system
 monitor and can change the user's display arrangement. Existing `restore` and
 turn/connection cleanup remain available when disabled.
 
-`agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. By default, turn-end and client disconnect restore it. To keep a dedicated workspace hidden between turns, explicitly set `virtualDisplay.restoreOnSessionEnd=false` before parking; the macOS app agent then retains placement and occlusion pins across client sessions. A new session still requires a fresh snapshot. `restore` restores every window parked by the runtime for that app. True owner-process exit also attempts restoration; this is not crash/logout/reboot persistence. A standalone process cannot host a display after it exits. Use the same app-agent namespace/config for each client and its CLI Stop hook. `sky_click` and `sky_key` accept covered and other-Space windows.
+`agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. By default, turn-end and client disconnect restore it. To keep a dedicated workspace hidden between turns, explicitly set `virtualDisplay.restoreOnSessionEnd=false` before parking; the macOS app agent then retains placement and occlusion pins across client sessions. A new session still requires a fresh snapshot. Without `window_id`, `restore` restores every window parked by the runtime for that app; an explicit ID restores only that registration. Once explicitly requested, a persistent workspace keeps its display until the owner exits, even when its last window record closes or is released. True owner-process exit also attempts restoration; this is not crash/logout/reboot persistence. A standalone process cannot host a display after it exits. Use the same app-agent namespace/config for each client and its CLI Stop hook. `sky_click` and `sky_key` accept covered and other-Space windows.
 
 `sky_key` types into whatever element the target window has focused, so click or AX-focus the field first. It fails closed for hidden apps (`cmd+h`), stale window ids, and missing private symbols; Windows and Linux return an unsupported error.
 
@@ -337,3 +337,10 @@ Pause and ask the user before actions that affect external systems or sensitive 
 ## Persisted screenshot settings
 
 Use `ocu config` to inspect effective values and their sources. `ocu config set image.format jpg` or `ocu config set image.maxLongEdgePixels 1024` persists macOS screenshot preferences in the user config file. ENV overrides take precedence; `ocu config reset KEY` removes a saved preference. Windows/Linux screenshot behavior is unchanged.
+
+### Exact macOS window ownership
+
+For applications shared with a human, bind with `initialState: false` and pass
+`windowId` with `windowPlacement` to `getAXState`. Native `get_app_state` uses
+`window_id`; `release` drops one registration without moving the window. Verify
+the actual runtime schema first. See [exact placement](../../../docs/exact-window-placement.md).

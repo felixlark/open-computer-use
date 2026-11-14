@@ -239,3 +239,13 @@ Linux 会话发现排除沙盒进程，不再导入其他进程的 AT_SPI_BUS_AD
 macOS 快照元素动作在输入前核对原 AX 引用的 role/subrole、名称和 identifier；静态文字和弹出按钮额外核对值。身份变化、引用失效或读取失败要求重新观察，不搜索同名替代对象。普通输入值和勾选状态不作为身份；当前 role/subrole 确认后才按需读值，密码字段不读值。真实回归入口：`scripts/tests/macos-element-identity-smoke.mjs`。
 
 macOS 以元素索引点击或执行次要动作前，会重读 `AXEnabled`；明确禁用的普通控件拒绝输入。菜单项保留原行为，因为关闭的菜单可能暴露过期的启用状态。真实 AppKit 回归入口为 `scripts/tests/macos-disabled-control-smoke.mjs`。
+
+## Exact macOS window lifecycle
+
+`get_app_state` accepts a live PID string plus `window_id` to keep, park or restore
+only that AX/WindowServer window. `release` drops only its placement record and
+identity-bound occlusion pin, without moving or resnapshotting it. Pin cleanup
+checks process launch and AX identity; display idle detection includes unmanaged
+and floating windows. Legacy no-ID selection is unchanged. See
+[exact placement](exact-window-placement.md) for capability checks, lifecycle
+receipts, session boundaries and consumer responsibilities.

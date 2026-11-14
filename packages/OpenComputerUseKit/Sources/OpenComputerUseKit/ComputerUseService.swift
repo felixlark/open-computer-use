@@ -701,43 +701,57 @@ public final class ComputerUseService {
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         windowPlacement: WindowPlacement = .keep,
+        windowID: CGWindowID? = nil,
         observation: SnapshotObservationOptions = .defaults
     ) throws -> ToolCallResult {
+        try validateExactWindowPlacement(windowPlacement, windowID: windowID)
         if windowPlacement == .agentDisplay { try VirtualDisplayConfig.current.requireEnabled() }
         try observation.validate()
-        guard windowPlacement != .keep else {
-            return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation), style: .fullState)
+        if windowPlacement == .release, let windowID {
+            let app = try AppDiscovery.resolveRunning(query)
+            _ = try SnapshotBuilder.resolveTargetWindow(for: app, windowID: windowID)
+            let released = try AgentDisplay.shared.release(windowID: windowID, pid: app.pid)
+            let receipt: [String: Any] = ["window_id": windowID, "released": true,
+                "was_registered": released.registered, "occlusion_restored": released.occlusionRestored]
+            let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+            return .text(String(decoding: data, as: UTF8.self))
         }
-
-        // Explicit placements never activate or raise; they only move the frame.
-        let snapshot = try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation)
+        guard windowPlacement != .keep else {
+            return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit,
+                treeLimits: treeLimits, recoveryPolicy: windowID == nil ? .allowActivation : .readOnly,
+                windowID: windowID, observation: observation), style: .fullState)
+        }
+        // Exact placement never activates or substitutes another window.
+        let snapshot = try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits,
+            recoveryPolicy: .readOnly, windowID: windowID, observation: observation)
         guard snapshot.mode != .fixture else {
             throw ComputerUseError.message("window_placement '\(windowPlacement.rawValue)' is not supported for fixture apps")
         }
         switch windowPlacement {
         case .agentDisplay:
-            guard var windowID = snapshot.targetWindowID, var windowElement = snapshot.windowElement else {
-                throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires a current target window. Run get_app_state again.")
+            guard var selectedID = snapshot.targetWindowID, var element = snapshot.windowElement else {
+                throw ComputerUseError.stateUnavailable("window_placement agent_display requires a target window")
             }
-            // A sheet cannot move on its own; park its window and the sheet goes along.
-            if stringValue(of: windowElement, attribute: kAXRoleAttribute) == kAXSheetRole as String {
-                guard let parent = copyParent(of: windowElement),
-                      stringValue(of: parent, attribute: kAXRoleAttribute) == kAXWindowRole as String,
-                      let parentID = SkyLightSPI.shared.windowID(for: parent), parentID != windowID
-                else {
-                    throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires the sheet's parent window. Run get_app_state again.")
+            if stringValue(of: element, attribute: kAXRoleAttribute) == kAXSheetRole as String {
+                guard windowID == nil else {
+                    throw ComputerUseError.invalidArguments("Explicit window_id cannot park a sheet; provide its parent window ID")
                 }
-                windowElement = parent
-                windowID = parentID
+                guard let parent = copyParent(of: element),
+                      stringValue(of: parent, attribute: kAXRoleAttribute) == kAXWindowRole as String,
+                      let parentID = SkyLightSPI.shared.windowID(for: parent), parentID != selectedID else {
+                    throw ComputerUseError.stateUnavailable("window_placement agent_display requires the sheet's parent window")
+                }
+                element = parent; selectedID = parentID
             }
-            try AgentDisplay.shared.park(windowID: windowID, pid: snapshot.app.pid, window: windowElement)
+            try AgentDisplay.shared.park(windowID: selectedID, pid: snapshot.app.pid, window: element)
         case .restore:
-            try AgentDisplay.shared.restoreAll(pid: snapshot.app.pid)
-        case .keep:
+            if let windowID { try AgentDisplay.shared.restore(windowID: windowID) }
+            else { try AgentDisplay.shared.restoreAll(pid: snapshot.app.pid) }
+        case .keep, .release:
             break
         }
-
-        return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation), style: .fullState)
+        return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits,
+            recoveryPolicy: .readOnly, windowID: windowID, observation: observation), style: .fullState)
     }
 
     public func click(
@@ -1366,14 +1380,16 @@ public final class ComputerUseService {
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation,
+        windowID: CGWindowID? = nil,
         observation: SnapshotObservationOptions = .defaults
     ) throws -> AppSnapshot {
-        let app = try AppDiscovery.resolve(query)
+        let app = try recoveryPolicy == .readOnly ? AppDiscovery.resolveRunning(query) : AppDiscovery.resolve(query)
         let snapshot = try SnapshotBuilder.build(
             for: app,
             textLimit: textLimit,
             treeLimits: treeLimits,
             recoveryPolicy: recoveryPolicy,
+            windowID: windowID,
             observation: observation
         )
 

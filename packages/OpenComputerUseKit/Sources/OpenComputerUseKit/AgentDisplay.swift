@@ -8,6 +8,7 @@ public enum WindowPlacement: String, CaseIterable, Sendable {
     case keep
     case agentDisplay = "agent_display"
     case restore
+    case release
 }
 
 func parseWindowPlacement(_ rawValue: String?) throws -> WindowPlacement {
@@ -23,6 +24,44 @@ func parseWindowPlacement(_ rawValue: String?) throws -> WindowPlacement {
     }
 
     return placement
+}
+
+func validateExactWindowPlacement(_ placement: WindowPlacement, windowID: CGWindowID?) throws {
+    if windowID == 0 { throw ComputerUseError.invalidArguments("window_id must be positive") }
+    if placement == .release && windowID == nil {
+        throw ComputerUseError.invalidArguments("window_placement release requires an explicit window_id")
+    }
+}
+
+/// Unknown enumeration retains the display; removing it could relocate a live
+/// window whose recovery record was deliberately released by its owner.
+func agentDisplayHasOccupants(windowFrames: [CGRect]?, displayBounds: CGRect) -> Bool {
+    guard let windowFrames else { return true }
+    return windowFrames.contains { !$0.isEmpty && $0.intersects(displayBounds) }
+}
+
+/// Use the WindowServer's complete non-desktop window list. Floating panels
+/// and other nonzero layers are real occupants too; malformed metadata is not
+/// evidence that dropping this display is safe.
+func agentDisplayHasOccupants(windowInfo: [[String: Any]]?, displayBounds: CGRect) -> Bool {
+    guard let windowInfo else { return true }
+    var frames: [CGRect] = []
+    for info in windowInfo {
+        guard let value = info[kCGWindowBounds as String] as? NSDictionary,
+              let frame = CGRect(dictionaryRepresentation: value) else { return true }
+        frames.append(frame)
+    }
+    return agentDisplayHasOccupants(windowFrames: frames, displayBounds: displayBounds)
+}
+
+/// Once a persistent workspace has been requested, keep its display until the
+/// owner exits, even after all window records are pruned. Request/session
+/// environment restoration must not turn that decision back into auto-destroy.
+struct AgentDisplayRetention {
+    private(set) var untilOwnerExit = false
+    mutating func recordPark(restoreOnSessionEnd: Bool) {
+        untilOwnerExit = untilOwnerExit || !restoreOnSessionEnd
+    }
 }
 
 /// Where a parked window goes on the agent display: inset from the top-left
@@ -90,6 +129,7 @@ final class AgentDisplay: @unchecked Sendable {
     private(set) var displaySpaceIDs: Set<UInt64> = []
     private var parked: [CGWindowID: ParkedWindow] = [:]
     private var exitHookInstalled = false
+    private var retention = AgentDisplayRetention()
 
     var isSupported: Bool {
         ocu_virtual_display_is_supported() != 0
@@ -125,9 +165,15 @@ final class AgentDisplay: @unchecked Sendable {
         }
         if var existing = parked[windowID] {
             if existing.pid == pid, existing.processLaunchDate == launchDate, CFEqual(existing.element, window) {
+                let bounds = try ensureDisplay()
+                guard let frame = Self.windowFrame(windowID),
+                      bounds.contains(CGPoint(x: frame.minX + 1, y: frame.minY + 1)) else {
+                    throw ComputerUseError.stateUnavailable("Existing placement is not on the agent display; inspect this exact window, then restore or release before parking again")
+                }
                 existing.restoreOnSessionEnd = config.restoreOnSessionEnd
                 parked[windowID] = existing
-                return try ensureDisplay()
+                retention.recordPark(restoreOnSessionEnd: config.restoreOnSessionEnd)
+                return bounds
             }
             parked.removeValue(forKey: windowID)
             WindowOcclusionKeepAlive.shared.forget(windowIDs: [windowID])
@@ -143,11 +189,23 @@ final class AgentDisplay: @unchecked Sendable {
         let bounds = try ensureDisplay()
         let target = agentDisplayPlacement(windowSize: size, displayBounds: bounds)
         let start = TimingLog.now()
-        try setAXPosition(window, target)
+        // AX may time out after delivering a move. Own the original recovery
+        // position before sending it, including an uncertain/error outcome.
         parked[windowID] = ParkedWindow(pid: pid, element: window, originalPosition: position,
                                       originalDisplayID: originalDisplay?.id, originalDisplayBounds: originalDisplay?.bounds,
                                       processLaunchDate: launchDate, restoreOnSessionEnd: config.restoreOnSessionEnd)
+        retention.recordPark(restoreOnSessionEnd: config.restoreOnSessionEnd)
         installExitHookIfNeeded()
+        do {
+            try setAXPosition(window, target)
+        } catch {
+            // Read back an uncertain AX result; never send the move twice.
+            let settled = waitUntil(timeout: Self.moveSettle) {
+                guard let frame = Self.windowFrame(windowID) else { return false }
+                return Self.isRestored(frame: frame, to: target)
+            }
+            guard settled != nil else { throw error }
+        }
         waitForWindow(windowID, toLandOn: displaySpaceIDs, or: bounds)
         TimingLog.log("agent_display.park", since: start)
         return bounds
@@ -273,9 +331,24 @@ final class AgentDisplay: @unchecked Sendable {
                 )
             }
         }
+        _ = WindowOcclusionKeepAlive.shared.release(windowID: windowID)
         parked.removeValue(forKey: windowID)
         TimingLog.log("agent_display.restore", since: start)
         destroyDisplayIfIdle()
+    }
+
+    /// Relinquish only this recovery entry. Never move a user-taken-over window,
+    /// and never perform a snapshot here (it would immediately pin it again).
+    func release(windowID: CGWindowID, pid: pid_t) throws -> (registered: Bool, occlusionRestored: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let entry = parked[windowID], entry.pid != pid, identity(of: entry, windowID: windowID) != .gone {
+            throw ComputerUseError.stateUnavailable("window_id belongs to another parked process")
+        }
+        let registered = parked.removeValue(forKey: windowID) != nil
+        let restored = WindowOcclusionKeepAlive.shared.release(windowID: windowID)
+        destroyDisplayIfIdle()
+        return (registered, restored)
     }
 
     func restoreAll() {
@@ -400,9 +473,10 @@ final class AgentDisplay: @unchecked Sendable {
     }
 
     private func destroyDisplayIfIdle() {
-        if parked.isEmpty {
-            destroyDisplay()
-        }
+        guard !retention.untilOwnerExit, parked.isEmpty, let bounds = displayBounds else { return }
+        let rows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        guard !agentDisplayHasOccupants(windowInfo: rows, displayBounds: bounds) else { return }
+        destroyDisplay()
     }
 
     private func destroyDisplay() {

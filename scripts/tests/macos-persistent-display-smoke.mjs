@@ -115,7 +115,9 @@ try {
   assert.ok(!inside(restored,display),'Explicit restore left native window hidden');
   assert.ok(displays().some(d=>state('native').physical_displays.map(String).includes(d.id) && inside(restored,d)),'Restore did not reach a user display');
   await snapshot(second,webBundle,'restore');
-  assert.ok(!displays().some(d=>d.id===display.id),'Last restore did not remove the virtual display');
+  // A released/unmanaged window (including a floating panel) may still own this
+  // display. Only actual empty-screen observation permits idle destruction.
+  assert.ok(!inside(ownWindow('web'),display),'Last explicit restore left the web receiver hidden');
   await waitUntil(()=>state('native').physical_displays.includes(state('native').main_display),'After display removal main was not physical');
   await snapshot(second,webBundle,'agent_display');
   display=displays().find(d=>inside(ownWindow('web'),d) && !state('web').physical_displays.map(String).includes(d.id));assert.ok(display);
