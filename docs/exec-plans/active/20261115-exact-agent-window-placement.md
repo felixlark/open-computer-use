@@ -19,14 +19,17 @@ behavior. This increment adds no resize/close-on-exit or global input fallback.
 
 ## Validation and rollout
 
-Targeted native tests and JS contracts passed; repository CI passed before the
-final occupancy regression fix. Repeat the required CI on the final documented
-tree. Independent code review found and closed the nonzero-layer occupancy bug.
+Targeted native tests and JS contracts passed. Required repository CI passed on
+the final documented tree, including the occupancy regression fix. Independent
+code review found and closed the nonzero-layer occupancy bug.
 A signed installed isolated app agent proved exact AX selection, wrong-PID/stale
 ID rejection and unregistered release without frame/topology/focus changes.
 That proof does not cover parking, registered recovery or owner exit.
 
-The shared app agent remains in use by another authorized GUI workflow. Do not
+The original GUI holder saved its buffers and handed over its authorized temporary
+windows; those windows were closed and disappearance verified. Another authorized
+GUI transaction is finishing, and an unattributed browser occupant remains on the
+shared display. Its ownership must be resolved before an owner-process exit. Do not
 replace its bundle or connect a new identity until its current atomic work and
 restoration finish. Census actual windows first, account for any stale recovery
 entry belonging to a human window, then perform the coordinated upgrade. Complete
