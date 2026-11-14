@@ -20,6 +20,9 @@ int ocu_virtual_display_is_supported(void);
 /// the display again.
 uint32_t ocu_virtual_display_create(const char *name, uint32_t width, uint32_t height, double refresh_rate, void **handle_out);
 
+/// An explicit identity permits independent app-agent namespaces to coexist.
+uint32_t ocu_virtual_display_create_with_serial(const char *name, uint32_t width, uint32_t height, double refresh_rate, uint32_t serial_number, void **handle_out);
+
 /// Remove the display and release the handle.
 void ocu_virtual_display_destroy(void *handle);
 

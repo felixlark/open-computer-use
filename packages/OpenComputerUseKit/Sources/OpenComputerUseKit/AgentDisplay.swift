@@ -37,6 +37,24 @@ func agentDisplayPlacement(windowSize: CGSize, displayBounds: CGRect, inset: CGF
     )
 }
 
+/// Preserve the legacy identity, while namespaced owners use stable distinct
+/// serials. WindowServer rejects simultaneous displays with the same identity.
+func agentDisplaySerialNumber(namespace: String?) -> UInt32 {
+    let file = openComputerUseAppAgentSocketFileName(namespace: namespace)
+    guard file != openComputerUseAppAgentSocketFileName(namespace: nil) else { return 1 }
+    let digest = file.dropFirst("open-computer-use-agent-".count).prefix(8)
+    return max(2, UInt32(digest, radix: 16) ?? 2)
+}
+
+func agentDisplayRestoredPosition(original: CGPoint, originalDisplay: CGRect?, targetDisplay: CGRect, windowSize: CGSize) -> CGPoint {
+    let offset = CGPoint(x: original.x - (originalDisplay?.minX ?? targetDisplay.minX),
+                         y: original.y - (originalDisplay?.minY ?? targetDisplay.minY))
+    let maxX = max(targetDisplay.minX, targetDisplay.maxX - min(max(windowSize.width, 1), targetDisplay.width))
+    let maxY = max(targetDisplay.minY, targetDisplay.maxY - min(max(windowSize.height, 1), targetDisplay.height))
+    return CGPoint(x: min(max(targetDisplay.minX + offset.x, targetDisplay.minX), maxX),
+                   y: min(max(targetDisplay.minY + offset.y, targetDisplay.minY), maxY))
+}
+
 /// The agent's own display: a virtual display (the mechanism behind Screen
 /// Sharing's headless sessions) that the user never sees. A window parked on it
 /// is genuinely on screen for WindowServer, so its app renders it, exposes its
@@ -60,6 +78,10 @@ final class AgentDisplay: @unchecked Sendable {
         let pid: pid_t
         let element: AXUIElement
         let originalPosition: CGPoint
+        let originalDisplayID: CGDirectDisplayID?
+        let originalDisplayBounds: CGRect?
+        let processLaunchDate: Date
+        var restoreOnSessionEnd: Bool
     }
 
     private let lock = NSLock()
@@ -95,19 +117,36 @@ final class AgentDisplay: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let bounds = try ensureDisplay()
-        if parked[windowID] != nil {
-            return bounds
+        let config = VirtualDisplayConfig.current
+        try config.requireEnabled()
+        guard let launchDate = NSRunningApplication(processIdentifier: pid)?.launchDate,
+              SkyLightSPI.shared.windowID(for: window) == windowID else {
+            throw ComputerUseError.stateUnavailable("window_placement 'agent_display' could not verify the target window identity")
+        }
+        if var existing = parked[windowID] {
+            if existing.pid == pid, existing.processLaunchDate == launchDate, CFEqual(existing.element, window) {
+                existing.restoreOnSessionEnd = config.restoreOnSessionEnd
+                parked[windowID] = existing
+                return try ensureDisplay()
+            }
+            parked.removeValue(forKey: windowID)
+            WindowOcclusionKeepAlive.shared.forget(windowIDs: [windowID])
         }
 
         guard let position = axPoint(window, kAXPositionAttribute as String) else {
             throw ComputerUseError.stateUnavailable("window_placement 'agent_display' could not read the window position")
         }
         let size = axSize(window) ?? CGSize(width: 800, height: 600)
+        let originalDisplay = Self.activeDisplays().first { $0.bounds.contains(CGPoint(x: position.x + 20, y: position.y + 20)) }
+        // Capture before creation: WindowServer can change the global origin
+        // when a display is added or the previous main display goes offline.
+        let bounds = try ensureDisplay()
         let target = agentDisplayPlacement(windowSize: size, displayBounds: bounds)
         let start = TimingLog.now()
         try setAXPosition(window, target)
-        parked[windowID] = ParkedWindow(pid: pid, element: window, originalPosition: position)
+        parked[windowID] = ParkedWindow(pid: pid, element: window, originalPosition: position,
+                                      originalDisplayID: originalDisplay?.id, originalDisplayBounds: originalDisplay?.bounds,
+                                      processLaunchDate: launchDate, restoreOnSessionEnd: config.restoreOnSessionEnd)
         installExitHookIfNeeded()
         waitForWindow(windowID, toLandOn: displaySpaceIDs, or: bounds)
         TimingLog.log("agent_display.park", since: start)
@@ -149,6 +188,35 @@ final class AgentDisplay: @unchecked Sendable {
             && abs(frame.minY - originalPosition.y) < tolerance
     }
 
+    private enum WindowIdentity { case live, gone, unknown }
+
+    private func identity(of entry: ParkedWindow, windowID: CGWindowID) -> WindowIdentity {
+        guard let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return .unknown }
+        guard let info = windows.first(where: { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowID }) else { return .gone }
+        guard let owner = info[kCGWindowOwnerPID as String] as? NSNumber else { return .unknown }
+        guard owner.int32Value == entry.pid else { return .gone }
+        guard let launchDate = NSRunningApplication(processIdentifier: entry.pid)?.launchDate else { return .unknown }
+        guard launchDate == entry.processLaunchDate else { return .gone }
+        guard let liveID = SkyLightSPI.shared.windowID(for: entry.element) else { return .unknown }
+        return liveID == windowID ? .live : .gone
+    }
+
+    /// Placement and occlusion pins may belong to the app agent rather than a
+    /// client. Return surviving IDs so session cleanup keeps their content live.
+    func endSession() -> Set<CGWindowID> {
+        lock.lock()
+        let closed = Set(parked.compactMap { identity(of: $0.value, windowID: $0.key) == .gone ? $0.key : nil })
+        for windowID in closed { parked.removeValue(forKey: windowID) }
+        let transient = parked.filter { $0.value.restoreOnSessionEnd }.map(\.key)
+        destroyDisplayIfIdle()
+        lock.unlock()
+        WindowOcclusionKeepAlive.shared.forget(windowIDs: closed)
+        for windowID in transient { try? restore(windowID: windowID) }
+        lock.lock()
+        defer { lock.unlock() }
+        return Set(parked.keys)
+    }
+
     /// Put a parked window back where it was.
     func restore(windowID: CGWindowID) throws {
         lock.lock()
@@ -156,9 +224,27 @@ final class AgentDisplay: @unchecked Sendable {
         guard let entry = parked[windowID] else {
             return
         }
+        switch identity(of: entry, windowID: windowID) {
+        case .gone:
+            parked.removeValue(forKey: windowID)
+            WindowOcclusionKeepAlive.shared.forget(windowIDs: [windowID])
+            destroyDisplayIfIdle()
+            return
+        case .unknown:
+            throw ComputerUseError.stateUnavailable("window_placement 'restore' could not verify the parked window identity")
+        case .live:
+            break
+        }
         let start = TimingLog.now()
+        let displays = Self.activeDisplays()
+        let target = displays.first { $0.id == entry.originalDisplayID && !Self.isAgentDisplay($0.id) }
+            ?? Self.preferredUserDisplay(in: displays)
+        let targetPosition = target.map {
+            agentDisplayRestoredPosition(original: entry.originalPosition, originalDisplay: entry.originalDisplayBounds,
+                                         targetDisplay: $0.bounds, windowSize: axSize(entry.element) ?? CGSize(width: 800, height: 600))
+        } ?? entry.originalPosition
         do {
-            try setAXPosition(entry.element, entry.originalPosition)
+            try setAXPosition(entry.element, targetPosition)
         } catch {
             // A closed target no longer needs restoration. Forget it so the
             // virtual display can still be removed. Keep live failures for a
@@ -172,7 +258,7 @@ final class AgentDisplay: @unchecked Sendable {
         }
         let back = waitUntil(timeout: Self.moveSettle) {
             guard let frame = Self.windowFrame(windowID) else { return false }
-            return Self.isRestored(frame: frame, to: entry.originalPosition)
+            return Self.isRestored(frame: frame, to: targetPosition)
         }
         if back == nil {
             Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
@@ -181,7 +267,7 @@ final class AgentDisplay: @unchecked Sendable {
                 destroyDisplayIfIdle()
                 return
             }
-            guard Self.isRestored(frame: frame, to: entry.originalPosition) else {
+            guard Self.isRestored(frame: frame, to: targetPosition) else {
                 throw ComputerUseError.stateUnavailable(
                     "window_placement 'restore' could not confirm that the window returned to its original position"
                 )
@@ -230,10 +316,12 @@ final class AgentDisplay: @unchecked Sendable {
             throw ComputerUseError.message("window_placement 'agent_display' is unavailable: CGVirtualDisplay is not present on this macOS")
         }
         let spi = SkyLightSPI.shared
+        let priorMain = CGMainDisplayID()
         let spacesBefore = Set((spi.managedDisplaySpaces() ?? [:]).values.flatMap { $0 })
         let start = TimingLog.now()
         var newHandle: UnsafeMutableRawPointer?
-        let id = ocu_virtual_display_create("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), 60, &newHandle)
+        let namespace = getenv(openComputerUseAppAgentSocketNamespaceEnvironmentKey).map { String(cString: $0) }
+        let id = ocu_virtual_display_create_with_serial("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), 60, agentDisplaySerialNumber(namespace: namespace), &newHandle)
         guard id != 0, let newHandle else {
             throw ComputerUseError.message("window_placement 'agent_display' could not create the agent display")
         }
@@ -258,8 +346,57 @@ final class AgentDisplay: @unchecked Sendable {
             Thread.sleep(forTimeInterval: Self.displayFallbackSettle)
         }
         displaySpaceIDs = newSpaces
+        try preserveUserMainDisplay(priorMain: priorMain)
         TimingLog.log("agent_display.ready", since: start)
         return displayBounds ?? .zero
+    }
+
+    private struct Display { let id: CGDirectDisplayID; let bounds: CGRect }
+
+    private static func activeDisplays() -> [Display] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        return ids.prefix(Int(count)).map { Display(id: $0, bounds: CGDisplayBounds($0)) }
+    }
+
+    private static func isAgentDisplay(_ id: CGDirectDisplayID) -> Bool {
+        CGDisplayVendorNumber(id) == 0x0CAC && CGDisplayModelNumber(id) == 0x0CAC
+    }
+
+    private static func preferredUserDisplay(in displays: [Display]) -> Display? {
+        let physical = displays.filter { !isAgentDisplay($0.id) }
+        if let main = physical.first(where: { $0.id == CGMainDisplayID() }) { return main }
+        return physical.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
+    }
+
+    /// A newly created invisible screen must not take the user's main screen.
+    /// Translate the existing arrangement for this login session only; never
+    /// enable/disable physical screens or change their modes.
+    private func preserveUserMainDisplay(priorMain: CGDirectDisplayID) throws {
+        guard Self.isAgentDisplay(CGMainDisplayID()) else { return }
+        let displays = Self.activeDisplays()
+        guard let target = displays.first(where: { $0.id == priorMain && !Self.isAgentDisplay($0.id) })
+                ?? Self.preferredUserDisplay(in: displays) else { return }
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success, let configuration else {
+            destroyDisplay()
+            throw ComputerUseError.stateUnavailable("agent display could not preserve the user's main display")
+        }
+        for display in displays {
+            guard CGConfigureDisplayOrigin(configuration, display.id,
+                  Int32((display.bounds.minX - target.bounds.minX).rounded()),
+                  Int32((display.bounds.minY - target.bounds.minY).rounded())) == .success else {
+                CGCancelDisplayConfiguration(configuration)
+                destroyDisplay()
+                throw ComputerUseError.stateUnavailable("agent display could not preserve the display arrangement")
+            }
+        }
+        guard CGCompleteDisplayConfiguration(configuration, .forSession) == .success else {
+            destroyDisplay()
+            throw ComputerUseError.stateUnavailable("agent display could not preserve the user's main display")
+        }
     }
 
     private func destroyDisplayIfIdle() {

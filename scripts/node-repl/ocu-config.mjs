@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 
 export const settings = {
   "virtualDisplay.enabled": { default: false, env: "OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED", boolean: true },
+  "virtualDisplay.restoreOnSessionEnd": { default: true, env: "OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END", boolean: true },
   "image.format": { default: "png", env: "OPEN_COMPUTER_USE_IMAGE_FORMAT", choices: ["png", "jpg", "webp"] },
   "image.jpegQuality": { default: 0.8, env: "OPEN_COMPUTER_USE_IMAGE_JPEG_QUALITY", min: 0, max: 1 },
   "image.maxLongEdgePixels": { default: 1280, env: "OPEN_COMPUTER_USE_IMAGE_MAX_DIMENSION", min: 1, max: 16384, integer: true, nullable: true },
@@ -70,7 +71,7 @@ export function inspectConfig(env = process.env) {
     if (env[spec.env] !== undefined) {
       try { value = validateSetting(key, env[spec.env], { fromText: true }); source = "env"; }
       catch (error) {
-        if (key === "virtualDisplay.enabled") { value = false; source = "default"; }
+        if (key.startsWith("virtualDisplay.")) { value = spec.default; source = "default"; }
         warnings.push(`${spec.env}: ${error.message}`);
       }
     }
@@ -131,8 +132,10 @@ image.discardBelowPixelCount: omit when width * height is below this total pixel
 Formats: png (default), jpg, webp (lossless); jpeg is a jpg alias.
 Precedence: environment > config file > defaults. Changes apply on the next capture or tools/list; reconnect MCP clients to refresh cached schemas.
 virtualDisplay.enabled: false by default; true exposes window_placement and permits virtual display creation.
+virtualDisplay.restoreOnSessionEnd: true by default; false retains parked windows across turns and client disconnects until explicit restore or owner-process exit.
 Examples:
   ocu config set virtualDisplay.enabled true
+  ocu config set virtualDisplay.restoreOnSessionEnd false
   ocu config set image.format jpg
   ocu config set image.maxLongEdgePixels 1024
   ocu config reset image.format`;

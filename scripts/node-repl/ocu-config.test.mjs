@@ -141,3 +141,15 @@ test("invalid persisted virtual display values do not enable the feature", t => 
     assert.equal(inspectConfig(env).values["virtualDisplay.enabled"], false);
   }
 });
+
+test("retained agent windows require an explicit strict setting and preserve independent overrides", t => {
+  const env = fixture(t), key = "virtualDisplay.restoreOnSessionEnd";
+  assert.equal(configCommand(["get", key], env), "true");
+  configCommand(["set", key, "false"], env);
+  assert.equal(inspectConfig({ ...env, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED: "true" }).values[key], false);
+  assert.equal(inspectConfig({ ...env, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END: "true" }).values[key], true);
+  assert.equal(inspectConfig({ ...env, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END: "1" }).values[key], true);
+  assert.throws(() => configCommand(["set", key, "0"], env), /true or false/);
+  configCommand(["reset", key], env);
+  assert.equal(configCommand(["get", key], env), "true");
+});

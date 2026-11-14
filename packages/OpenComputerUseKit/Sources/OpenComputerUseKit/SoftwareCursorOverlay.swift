@@ -134,9 +134,24 @@ public func visualCursorObservationFileURL(environment: [String: String]) -> URL
 
 public let openComputerUseTurnEndedNotificationName = Notification.Name("com.ifuryst.opencomputeruse.turn-ended")
 
+/// Use a distinct name, not just an object filter: older agents registered a
+/// nil object filter and would otherwise receive every namespaced notification.
+public func openComputerUseTurnEndedNotification(forSocketFileName fileName: String) -> Notification.Name {
+    guard fileName != openComputerUseAppAgentSocketFileName(namespace: nil) else {
+        return openComputerUseTurnEndedNotificationName
+    }
+    return Notification.Name(openComputerUseTurnEndedNotificationName.rawValue + "." + fileName)
+}
+
+public var currentOpenComputerUseTurnEndedNotification: Notification.Name {
+    openComputerUseTurnEndedNotification(forSocketFileName: openComputerUseAppAgentSocketFileName(
+        namespace: ProcessInfo.processInfo.environment[openComputerUseAppAgentSocketNamespaceEnvironmentKey]
+    ))
+}
+
 public func postOpenComputerUseTurnEndedNotification() {
     DistributedNotificationCenter.default().postNotificationName(
-        openComputerUseTurnEndedNotificationName,
+        currentOpenComputerUseTurnEndedNotification,
         object: nil,
         userInfo: nil,
         deliverImmediately: true

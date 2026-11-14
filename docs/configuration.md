@@ -7,7 +7,8 @@ The config file defaults to `~/.config/ocu/config.json`. You can edit it directl
 ```json
 {
   "virtualDisplay": {
-    "enabled": false
+    "enabled": false,
+    "restoreOnSessionEnd": true
   },
   "image": {
     "format": "png",
@@ -74,5 +75,25 @@ Virtual displays add a monitor to the system arrangement and can affect existing
 monitor layouts. To disable, use `ocu config set virtualDisplay.enabled false` and
 remove any enabling environment override. Reconnect clients to refresh their tool
 schema. Existing parked windows can still be restored using an explicit `restore`
-call or `turn-ended`/connection cleanup; disabling does not destroy a display while
-it still holds windows. Old running binaries must be restarted after upgrading.
+call. By default, `turn-ended` and connection cleanup also restore them; disabling
+creation does not destroy a display while it still holds windows. Old running
+binaries must be restarted after upgrading.
+
+For a dedicated agent workspace, set `virtualDisplay.restoreOnSessionEnd=false`
+(`ocu config set virtualDisplay.restoreOnSessionEnd false`, or environment
+`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END=false`). The setting is
+recorded when each window is parked. Its placement and occlusion pin then belong
+to the long-lived macOS app agent, surviving turn-end notifications and CLI/MCP
+client disconnects. Each new client still needs a fresh snapshot before acting.
+Re-parking a window adopts the current setting without losing its original position.
+
+Explicit `window_placement=restore` returns the application's parked windows;
+normal owner-process exit also attempts restoration. This is not persistence
+across a process crash, logout or reboot. Closed/replaced targets are pruned on
+the next cleanup, and an unverified identity retains its recovery record.
+Standalone runtimes cannot retain a display after their owning process exits.
+
+Distributed Stop notifications use the app-agent socket namespace in their name.
+Pass the same `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE` to the CLI Stop hook and
+MCP launcher; the app agent derives its listener name from its actual socket path.
+Namespaced hooks do not broadcast to older unnamespaced agents.

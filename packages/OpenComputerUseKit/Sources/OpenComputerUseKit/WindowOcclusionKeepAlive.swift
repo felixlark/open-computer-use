@@ -102,10 +102,11 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
         return frozenWindowPreviousStates[windowID] != nil
     }
 
-    func releaseAll(spi: any WindowOcclusionControlling = SkyLightSPI.shared) {
+    func releaseAll(excluding retainedWindowIDs: Set<CGWindowID> = [], spi: any WindowOcclusionControlling = SkyLightSPI.shared) {
         lock.lock()
         defer { lock.unlock() }
         for (windowID, previousState) in Array(frozenWindowPreviousStates) {
+            guard !retainedWindowIDs.contains(windowID) else { continue }
             do {
                 try spi.setWindowOcclusionNotificationsEnabled(previousState, windowID: windowID)
                 frozenWindowPreviousStates.removeValue(forKey: windowID)
@@ -113,6 +114,14 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
                 // Retain failed entries so a later cleanup can retry.
             }
         }
+    }
+
+    /// A closed/replaced window no longer owns the ID. Do not apply its saved
+    /// notification state to a new window that happens to reuse that ID.
+    func forget(windowIDs: Set<CGWindowID>) {
+        lock.lock()
+        defer { lock.unlock() }
+        for windowID in windowIDs { frozenWindowPreviousStates.removeValue(forKey: windowID) }
     }
 
     private func installExitHookIfNeeded() {
@@ -130,6 +139,8 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
 /// Release process-owned background window state at the host's session
 /// boundary. The exit hooks remain a final best-effort fallback.
 public func resetOpenComputerUseBackgroundWindowState() {
-    WindowOcclusionKeepAlive.shared.releaseAll()
-    AgentDisplay.shared.restoreAll()
+    BackgroundWindowStateTransaction.perform {
+        let retained = AgentDisplay.shared.endSession()
+        WindowOcclusionKeepAlive.shared.releaseAll(excluding: retained)
+    }
 }
