@@ -244,10 +244,17 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
 
     /// CGWindowID behind an AX window element.
     func windowID(for element: AXUIElement) -> CGWindowID? {
-        guard let axElementGetWindowFunction else { return nil }
+        windowIDRead(for: element).value
+    }
+
+    /// Preserve the raw AX result for exact binding diagnostics.
+    func windowIDRead(for element: AXUIElement) -> ExactAXRead<CGWindowID> {
+        guard let axElementGetWindowFunction else {
+            return ExactAXRead(value: nil, status: AXError.notImplemented.rawValue)
+        }
         var windowID: CGWindowID = 0
-        guard axElementGetWindowFunction(element, &windowID) == .success, windowID != 0 else { return nil }
-        return windowID
+        let status = axElementGetWindowFunction(element, &windowID)
+        return ExactAXRead(value: status == .success && windowID != 0 ? windowID : nil, status: status.rawValue)
     }
 
     /// Enable or disable WindowServer occlusion notifications for one window of
