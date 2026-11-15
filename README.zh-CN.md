@@ -17,6 +17,9 @@
 
 在这期间我利用了之前写的 [harness 模版](https://github.com/iFurySt/harness-template) 开启了这个新项目。这是一个可以快速拉起面向 AI 仓库的 template，非常适合 100% AI-Generated 的项目，也是这一个月来我们最大的实践和收获。现在我们可以基于这套方法论快速实现很多东西；如果你有兴趣，我也写了一篇[文章](https://www.ifuryst.com/blog/2026/speedrunning-the-ai-era/)专门介绍这套方法论
 
+
+macOS 另提供[虚拟屏只读实时预览](docs/agent-display-preview.md)：整个 OCU 虚拟屏显示在可缩放窗口中，可从菜单栏随时打开。构建入口为 `scripts/build-ocu-preview-app.sh`。
+
 ## 演示
 
 ### Codex App 和 Codex CLI

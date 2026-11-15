@@ -8,6 +8,7 @@ let package = Package(
         .macOS(.v14),
     ],
     products: [
+        .executable(name: "OCUPreview", targets: ["OCUPreview"]),
         .executable(name: "OCULockInstaller", targets: ["OCULockInstaller"]),
         .executable(name: "OCULockService", targets: ["OCULockService"]),
         .executable(name: "OCUGuardian", targets: ["OCUGuardian"]),
@@ -40,6 +41,15 @@ let package = Package(
         .package(url: "https://github.com/SDWebImage/libwebp-Xcode.git", exact: "1.6.0"),
     ],
     targets: [
+        .executableTarget(
+            name: "OCUPreview",
+            path: "apps/OCUPreview/Sources"
+        ),
+        .testTarget(
+            name: "OCUPreviewTests",
+            dependencies: ["OCUPreview"],
+            path: "apps/OCUPreview/Tests"
+        ),
         .target(
             name: "OpenComputerUseVirtualDisplayShim",
             path: "packages/OpenComputerUseVirtualDisplayShim",
