@@ -2030,7 +2030,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertThrowsError(try parseWindowPlacement("park")) { error in
             XCTAssertEqual(
                 (error as? ComputerUseError)?.errorDescription,
-                "Invalid window_placement 'park'. Expected one of: keep, agent_display, restore"
+                "Invalid window_placement 'park'. Expected one of: keep, agent_display, restore, release"
             )
         }
 
@@ -2064,9 +2064,10 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testAgentDisplayRestoreGeometryUsesATolerance() {
-        let original = CGPoint(x: 200, y: 300)
+        let original = CGRect(x: 200, y: 300, width: 600, height: 420)
         XCTAssertTrue(AgentDisplay.isRestored(frame: CGRect(x: 200.5, y: 299.5, width: 600, height: 420), to: original))
         XCTAssertFalse(AgentDisplay.isRestored(frame: CGRect(x: 202, y: 300, width: 600, height: 420), to: original))
+        XCTAssertFalse(AgentDisplay.isRestored(frame: CGRect(x: 200, y: 300, width: 600, height: 400), to: original))
     }
 
     func testOcclusionKeepAliveRestoresPriorStateAndCanRetryFailures() {

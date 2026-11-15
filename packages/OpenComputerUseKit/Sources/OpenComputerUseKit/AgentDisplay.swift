@@ -94,12 +94,130 @@ func agentDisplayRestoredPosition(original: CGPoint, originalDisplay: CGRect?, t
                    y: min(max(targetDisplay.minY + offset.y, targetDisplay.minY), maxY))
 }
 
+/// Geometry belongs to the placement owner, never to a consumer that would
+/// otherwise overwrite the original frame before OCU can capture it.
+enum AgentWindowGeometry {
+    static func valid(_ frame: CGRect) -> Bool {
+        [frame.origin.x, frame.origin.y, frame.width, frame.height].allSatisfy(\.isFinite)
+            && frame.width > 0 && frame.height > 0
+    }
+
+    static func samePosition(_ frame: CGRect, _ target: CGRect, tolerance: CGFloat = 1) -> Bool {
+        abs(frame.minX - target.minX) < tolerance && abs(frame.minY - target.minY) < tolerance
+    }
+
+    static func sameSize(_ frame: CGRect, _ target: CGRect, tolerance: CGFloat = 1) -> Bool {
+        abs(frame.width - target.width) < tolerance && abs(frame.height - target.height) < tolerance
+    }
+
+    static func sameFrame(_ frame: CGRect, _ target: CGRect) -> Bool {
+        valid(frame) && valid(target) && samePosition(frame, target) && sameSize(frame, target)
+    }
+
+    static func displayContainsCenter(_ bounds: CGRect, frame: CGRect) -> Bool {
+        bounds.contains(CGPoint(x: frame.midX, y: frame.midY))
+    }
+
+    static func fittedFrame(original: CGRect, display: CGRect, inset: CGFloat = 40) -> CGRect {
+        // Fit the inset area, including exact-screen-size windows. A full-bounds
+        // target at y=0 can be clamped below the menu bar by WindowServer.
+        let size = CGSize(width: min(original.width, max(1, display.width - 2 * inset)),
+                          height: min(original.height, max(1, display.height - 2 * inset)))
+        return CGRect(origin: agentDisplayPlacement(windowSize: size, displayBounds: display, inset: inset), size: size)
+    }
+
+    /// Only fallback selection uses fitting. An unchanged original display
+    /// retains its exact frame, including intentional partial offscreen edges.
+    static func fallbackDisplayID(displays: [UInt32: CGRect], main: UInt32, windowSize: CGSize?) -> UInt32? {
+        func largest(_ candidates: [UInt32: CGRect]) -> UInt32? {
+            candidates.max { a, b in
+                let left = a.value.width * a.value.height, right = b.value.width * b.value.height
+                return left == right ? a.key > b.key : left < right
+            }?.key
+        }
+        guard let size = windowSize else { return displays[main] == nil ? largest(displays) : main }
+        // The same existing40pt margin avoids WindowServer menu/edge clamps.
+        // This never shrinks the original restoration target.
+        let fitting = displays.filter { canRestore(size, on: $0.value) }
+        if fitting.isEmpty { return largest(displays) }
+        return fitting[main] == nil ? largest(fitting) : main
+    }
+
+    static func canRestore(_ size: CGSize, on bounds: CGRect) -> Bool {
+        size.width <= max(1, bounds.width - 80) && size.height <= max(1, bounds.height - 80)
+    }
+
+    static func restorationDisplayID(displays: [UInt32: CGRect], main: UInt32,
+        originalID: UInt32?, originalBounds: CGRect?, windowSize: CGSize) -> UInt32? {
+        if let id = originalID, let current = displays[id],
+           current == originalBounds || canRestore(windowSize, on: current) { return id }
+        return fallbackDisplayID(displays: displays, main: main, windowSize: windowSize)
+    }
+
+    static func restoredFrame(original: CGRect, originalDisplay: CGRect?, targetDisplay: CGRect?) -> CGRect {
+        guard let targetDisplay, targetDisplay != originalDisplay else { return original }
+        let rebased = agentDisplayRestoredPosition(original: original.origin, originalDisplay: originalDisplay,
+            targetDisplay: targetDisplay, windowSize: original.size)
+        let area = targetDisplay.insetBy(dx: min(40, max(0, (targetDisplay.width - 1) / 2)),
+            dy: min(40, max(0, (targetDisplay.height - 1) / 2)))
+        let origin = agentDisplayRestoredPosition(original: rebased, originalDisplay: nil, targetDisplay: area, windowSize: original.size)
+        return CGRect(origin: origin, size: original.size)
+    }
+}
+
+/// A single ordered geometry transaction. Injectable reads/writes also let
+/// non-GUI tests exercise uncertain AX acknowledgements and identity loss.
+struct AgentWindowGeometryWriter {
+    let readFrame: () -> CGRect?
+    let setPosition: (CGPoint) throws -> Void
+    let setSize: (CGSize) throws -> Void
+    let settle: (() -> Bool) -> Bool
+
+    func apply(_ target: CGRect, restoring: Bool) throws {
+        guard AgentWindowGeometry.valid(target) else {
+            throw ComputerUseError.stateUnavailable("window_placement has invalid target geometry")
+        }
+        // Restore on the physical display before expanding: expanding while
+        // still on the smaller invisible screen can be clamped by the OS.
+        if restoring { try position(target) }
+        try size(target)
+        try position(target)
+        guard settle({ readFrame().map { AgentWindowGeometry.sameFrame($0, target) } ?? false }) else {
+            throw ComputerUseError.stateUnavailable("window_placement could not confirm the complete window frame")
+        }
+    }
+
+    private func position(_ target: CGRect) throws {
+        try write(target, matches: AgentWindowGeometry.samePosition, action: { try setPosition(target.origin) })
+    }
+
+    private func size(_ target: CGRect) throws {
+        try write(target, matches: AgentWindowGeometry.sameSize, action: { try setSize(target.size) })
+    }
+
+    private func write(_ target: CGRect, matches: (CGRect, CGRect, CGFloat) -> Bool, action: () throws -> Void) throws {
+        // readFrame includes the exact identity check immediately before every
+        // write and on every observation. Unknown/replaced identities stop here.
+        guard let current = readFrame(), AgentWindowGeometry.valid(current) else {
+            throw ComputerUseError.stateUnavailable("window_placement could not verify the target identity and frame")
+        }
+        if matches(current, target, 1) { return }
+        var failure: Error?
+        do { try action() } catch { failure = error }
+        // An AX error can follow delivery. Observe the requested attribute;
+        // never replay an unconfirmed write, even when the call returned success.
+        guard settle({ readFrame().map { matches($0, target, 1) } ?? false }) else {
+            throw failure ?? ComputerUseError.stateUnavailable("window_placement geometry write remains unconfirmed")
+        }
+    }
+}
+
 /// The agent's own display: a virtual display (the mechanism behind Screen
 /// Sharing's headless sessions) that the user never sees. A window parked on it
 /// is genuinely on screen for WindowServer, so its app renders it, exposes its
 /// full accessibility tree and accepts input, while the user's Space, foreground
 /// app and pointer are untouched. Parking moves the window's frame (AX
-/// position, no activation); the original position is restored on `restore`
+/// position/size, no activation); the original frame is restored on `restore`
 /// and at process exit, and the display is removed once nothing is parked.
 final class AgentDisplay: @unchecked Sendable {
     static let shared = AgentDisplay()
@@ -111,12 +229,11 @@ final class AgentDisplay: @unchecked Sendable {
     static let moveSettle: TimeInterval = 2.0
     // Fallback sleeps when the observation SPIs are unavailable.
     static let displayFallbackSettle: TimeInterval = 0.5
-    static let moveFallbackSettle: TimeInterval = 1.0
 
     struct ParkedWindow {
         let pid: pid_t
         let element: AXUIElement
-        let originalPosition: CGPoint
+        let originalFrame: CGRect
         let originalDisplayID: CGDirectDisplayID?
         let originalDisplayBounds: CGRect?
         let processLaunchDate: Date
@@ -151,6 +268,20 @@ final class AgentDisplay: @unchecked Sendable {
         return parked.filter { $0.value.pid == pid }.map(\.key)
     }
 
+    /// Explicit login bootstrap; configuration is sampled under the lifecycle lock.
+    func ensureForHost() throws -> PersistentDisplayReadiness {
+        lock.lock()
+        defer { lock.unlock() }
+        let config = VirtualDisplayConfig.current
+        try PersistentDisplayBootstrap.requireConfiguration(config)
+        let bounds = try ensureDisplay(configuration: config)
+        retention.recordPark(restoreOnSessionEnd: config.restoreOnSessionEnd)
+        installExitHookIfNeeded()
+        let namespace = getenv(openComputerUseAppAgentSocketNamespaceEnvironmentKey)
+            .map { String(cString: $0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        return PersistentDisplayReadiness(id: displayID, bounds: bounds, namespace: namespace)
+    }
+
     /// Move `window` onto the agent display. Returns the display bounds.
     @discardableResult
     func park(windowID: CGWindowID, pid: pid_t, window: AXUIElement) throws -> CGRect {
@@ -166,8 +297,7 @@ final class AgentDisplay: @unchecked Sendable {
         if var existing = parked[windowID] {
             if existing.pid == pid, existing.processLaunchDate == launchDate, CFEqual(existing.element, window) {
                 let bounds = try ensureDisplay()
-                guard let frame = Self.windowFrame(windowID),
-                      bounds.contains(CGPoint(x: frame.minX + 1, y: frame.minY + 1)) else {
+                guard let frame = Self.windowFrame(windowID), bounds.contains(frame) else {
                     throw ComputerUseError.stateUnavailable("Existing placement is not on the agent display; inspect this exact window, then restore or release before parking again")
                 }
                 existing.restoreOnSessionEnd = config.restoreOnSessionEnd
@@ -179,34 +309,25 @@ final class AgentDisplay: @unchecked Sendable {
             WindowOcclusionKeepAlive.shared.forget(windowIDs: [windowID])
         }
 
-        guard let position = axPoint(window, kAXPositionAttribute as String) else {
-            throw ComputerUseError.stateUnavailable("window_placement 'agent_display' could not read the window position")
+        guard let position = axPoint(window, kAXPositionAttribute as String), let size = axSize(window),
+              AgentWindowGeometry.valid(CGRect(origin: position, size: size)) else {
+            throw ComputerUseError.stateUnavailable("window_placement 'agent_display' could not read the complete window frame")
         }
-        let size = axSize(window) ?? CGSize(width: 800, height: 600)
-        let originalDisplay = Self.activeDisplays().first { $0.bounds.contains(CGPoint(x: position.x + 20, y: position.y + 20)) }
+        let originalDisplay = Self.activeDisplays().first { AgentWindowGeometry.displayContainsCenter($0.bounds, frame: CGRect(origin: position, size: size)) }
         // Capture before creation: WindowServer can change the global origin
         // when a display is added or the previous main display goes offline.
-        let bounds = try ensureDisplay()
-        let target = agentDisplayPlacement(windowSize: size, displayBounds: bounds)
         let start = TimingLog.now()
-        // AX may time out after delivering a move. Own the original recovery
-        // position before sending it, including an uncertain/error outcome.
-        parked[windowID] = ParkedWindow(pid: pid, element: window, originalPosition: position,
+        let entry = ParkedWindow(pid: pid, element: window, originalFrame: CGRect(origin: position, size: size),
                                       originalDisplayID: originalDisplay?.id, originalDisplayBounds: originalDisplay?.bounds,
                                       processLaunchDate: launchDate, restoreOnSessionEnd: config.restoreOnSessionEnd)
+        // Own recovery before display creation and every uncertain AX effect.
+        parked[windowID] = entry
         retention.recordPark(restoreOnSessionEnd: config.restoreOnSessionEnd)
         installExitHookIfNeeded()
-        do {
-            try setAXPosition(window, target)
-        } catch {
-            // Read back an uncertain AX result; never send the move twice.
-            let settled = waitUntil(timeout: Self.moveSettle) {
-                guard let frame = Self.windowFrame(windowID) else { return false }
-                return Self.isRestored(frame: frame, to: target)
-            }
-            guard settled != nil else { throw error }
-        }
-        waitForWindow(windowID, toLandOn: displaySpaceIDs, or: bounds)
+        let bounds = try ensureDisplay()
+        let target = AgentWindowGeometry.fittedFrame(original: entry.originalFrame, display: bounds)
+        try geometryWriter(for: entry, windowID: windowID).apply(target, restoring: false)
+        try waitForWindow(windowID, entry: entry, toLandOn: displaySpaceIDs, or: bounds)
         TimingLog.log("agent_display.park", since: start)
         return bounds
     }
@@ -214,11 +335,11 @@ final class AgentDisplay: @unchecked Sendable {
     /// Wait until the window's frame sits inside the display and, when the
     /// Space SPI is available, WindowServer also reports it on one of the
     /// display's Spaces. Space membership alone precedes the frame update.
-    private func waitForWindow(_ windowID: CGWindowID, toLandOn spaceIDs: Set<UInt64>, or bounds: CGRect) {
+    private func waitForWindow(_ windowID: CGWindowID, entry: ParkedWindow, toLandOn spaceIDs: Set<UInt64>, or bounds: CGRect) throws {
         let spi = SkyLightSPI.shared
         let landed = waitUntil(timeout: Self.moveSettle) {
-            guard let frame = Self.windowFrame(windowID),
-                  bounds.contains(CGPoint(x: frame.minX + 1, y: frame.minY + 1))
+            guard self.identity(of: entry, windowID: windowID) == .live,
+                  let frame = Self.windowFrame(windowID), bounds.contains(frame)
             else { return false }
             if !spaceIDs.isEmpty, let spaces = spi.spaces(forWindow: windowID) {
                 return spaces.contains(where: spaceIDs.contains)
@@ -226,7 +347,7 @@ final class AgentDisplay: @unchecked Sendable {
             return true
         }
         if landed == nil {
-            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
+            throw ComputerUseError.stateUnavailable("window_placement could not confirm the complete frame on the agent display")
         }
     }
 
@@ -241,9 +362,17 @@ final class AgentDisplay: @unchecked Sendable {
         return nil
     }
 
-    static func isRestored(frame: CGRect, to originalPosition: CGPoint, tolerance: CGFloat = 1) -> Bool {
-        abs(frame.minX - originalPosition.x) < tolerance
-            && abs(frame.minY - originalPosition.y) < tolerance
+    static func isRestored(frame: CGRect, to originalFrame: CGRect) -> Bool {
+        AgentWindowGeometry.sameFrame(frame, originalFrame)
+    }
+
+    private func geometryWriter(for entry: ParkedWindow, windowID: CGWindowID) -> AgentWindowGeometryWriter {
+        AgentWindowGeometryWriter(readFrame: {
+            guard self.identity(of: entry, windowID: windowID) == .live else { return nil }
+            return Self.windowFrame(windowID)
+        }, setPosition: { try self.setAXPosition(entry.element, $0) },
+           setSize: { try self.setAXSize(entry.element, $0) },
+           settle: { waitUntil(timeout: Self.moveSettle, $0) != nil })
     }
 
     private enum WindowIdentity { case live, gone, unknown }
@@ -295,41 +424,27 @@ final class AgentDisplay: @unchecked Sendable {
         }
         let start = TimingLog.now()
         let displays = Self.activeDisplays()
-        let target = displays.first { $0.id == entry.originalDisplayID && !Self.isAgentDisplay($0.id) }
-            ?? Self.preferredUserDisplay(in: displays)
-        let targetPosition = target.map {
-            agentDisplayRestoredPosition(original: entry.originalPosition, originalDisplay: entry.originalDisplayBounds,
-                                         targetDisplay: $0.bounds, windowSize: axSize(entry.element) ?? CGSize(width: 800, height: 600))
-        } ?? entry.originalPosition
+        let physical = displays.filter { !Self.isAgentDisplay($0.id) }
+        let targetID = AgentWindowGeometry.restorationDisplayID(
+            displays: Dictionary(uniqueKeysWithValues: physical.map { ($0.id, $0.bounds) }), main: CGMainDisplayID(),
+            originalID: entry.originalDisplayID, originalBounds: entry.originalDisplayBounds, windowSize: entry.originalFrame.size)
+        guard let target = physical.first(where: { $0.id == targetID }) else {
+            throw ComputerUseError.stateUnavailable("No physical display is available for window restoration")
+        }
+        let targetFrame = AgentWindowGeometry.restoredFrame(original: entry.originalFrame,
+            originalDisplay: entry.originalDisplayBounds, targetDisplay: target.bounds)
         do {
-            try setAXPosition(entry.element, targetPosition)
+            try geometryWriter(for: entry, windowID: windowID).apply(targetFrame, restoring: true)
         } catch {
-            // A closed target no longer needs restoration. Forget it so the
-            // virtual display can still be removed. Keep live failures for a
-            // later retry instead of losing the original position.
-            if Self.windowFrame(windowID) == nil {
+            // A failed frame read is not evidence of closure. Unknown identity
+            // and all partial writes retain both recovery and visibility pin.
+            if identity(of: entry, windowID: windowID) == .gone {
                 parked.removeValue(forKey: windowID)
+                WindowOcclusionKeepAlive.shared.forget(windowIDs: [windowID])
                 destroyDisplayIfIdle()
                 return
             }
             throw error
-        }
-        let back = waitUntil(timeout: Self.moveSettle) {
-            guard let frame = Self.windowFrame(windowID) else { return false }
-            return Self.isRestored(frame: frame, to: targetPosition)
-        }
-        if back == nil {
-            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
-            guard let frame = Self.windowFrame(windowID) else {
-                parked.removeValue(forKey: windowID)
-                destroyDisplayIfIdle()
-                return
-            }
-            guard Self.isRestored(frame: frame, to: targetPosition) else {
-                throw ComputerUseError.stateUnavailable(
-                    "window_placement 'restore' could not confirm that the window returned to its original position"
-                )
-            }
         }
         _ = WindowOcclusionKeepAlive.shared.release(windowID: windowID)
         parked.removeValue(forKey: windowID)
@@ -380,8 +495,8 @@ final class AgentDisplay: @unchecked Sendable {
 
     // MARK: - Display lifecycle (call with lock held)
 
-    private func ensureDisplay() throws -> CGRect {
-        try VirtualDisplayConfig.current.requireEnabled()
+    private func ensureDisplay(configuration: VirtualDisplayConfig? = nil) throws -> CGRect {
+        try (configuration ?? .current).requireEnabled()
         if displayID != 0, let bounds = displayBounds, !bounds.isEmpty {
             return bounds
         }
@@ -440,8 +555,9 @@ final class AgentDisplay: @unchecked Sendable {
 
     private static func preferredUserDisplay(in displays: [Display]) -> Display? {
         let physical = displays.filter { !isAgentDisplay($0.id) }
-        if let main = physical.first(where: { $0.id == CGMainDisplayID() }) { return main }
-        return physical.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
+        let id = AgentWindowGeometry.fallbackDisplayID(displays: Dictionary(uniqueKeysWithValues: physical.map { ($0.id, $0.bounds) }),
+            main: CGMainDisplayID(), windowSize: nil)
+        return physical.first { $0.id == id }
     }
 
     /// A newly created invisible screen must not take the user's main screen.
@@ -522,6 +638,17 @@ final class AgentDisplay: @unchecked Sendable {
         let result = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
         guard result == .success else {
             throw ComputerUseError.stateUnavailable("window_placement could not move the window (AXError \(result.rawValue))")
+        }
+    }
+
+    private func setAXSize(_ element: AXUIElement, _ size: CGSize) throws {
+        var mutable = size
+        guard let value = AXValueCreate(.cgSize, &mutable) else {
+            throw ComputerUseError.message("could not encode the window size")
+        }
+        let result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value)
+        guard result == .success else {
+            throw ComputerUseError.stateUnavailable("window_placement could not resize the window (AXError \(result.rawValue))")
         }
     }
 }

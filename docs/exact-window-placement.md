@@ -20,8 +20,9 @@ activates it, raises it or silently switches to a parent. Its AX window must
 belong to the running process. An explicit sheet cannot be parked: obtain and
 confirm its parent ID instead. A PID or window mismatch fails before movement.
 The normal blocked-app policy still applies to numeric PIDs. Recovery ownership
-is recorded before sending the move: an AX error can arrive after delivery. OCU
-reads back its position without repeating the move. An unresolved error retains
+and the full original frame are recorded before display creation or AX writes:
+an AX error can arrive after delivery. OCU reads back the requested attribute
+without repeating an unconfirmed write. An unresolved error retains
 the recovery record; inspect that exact window before restoring or releasing it.
 
 ## Native calls
@@ -36,8 +37,8 @@ and ID with freshly observed values for an owned window:
 | Placement | Effect with an explicit ID |
 | --- | --- |
 | `keep` | Observe that exact window, without moving it. |
-| `agent_display` | Record its actual original position and identity, then park only it on OCU's owned invisible display. |
-| `restore` | Restore only its registered position, then observe the same window. |
+| `agent_display` | Record its actual original frame and identity, fit oversized dimensions, then park only it fully inside OCU's owned invisible display. |
+| `restore` | Restore only its registered full frame, then observe the same window. |
 | `release` | Drop only its recovery record and visibility pin; do not move or snapshot it. |
 
 `release` requires `window_id` and returns a text JSON receipt:
@@ -96,9 +97,34 @@ contains another live window, including floating/nonzero-layer windows. Unknown
 WindowServer metadata conservatively keeps it alive. OCU remains the single
 owner of that display; consumers must not create another display for parking.
 
-Recovery stores position, not size. Consumers should not resize a delegated
-window; if they do, they own restoring its full frame before `release`. A window
+Full-frame placement requires the actual namespace owner's
+`ensure_agent_display` receipt with `protocol:2` and
+`geometry:"fit_restore_v1"`; protocol 1 only promises the legacy position
+contract. The tool's exact-ID schema alone cannot distinguish these contracts.
+Consumers must not pre-resize a delegated window: OCU captures its original
+frame before any placement effect. Dimensions exceeding the virtual screen's
+existing inset area are reduced; dimensions fitting that area are unchanged.
+Unsupported size writes, OS minimum dimensions or incomplete placement return
+an error while preserving recovery ownership, rather than accepting an
+off-screen window. Full frame and Space membership are confirmed before success.
+
+Restore moves onto the original physical display, restores original dimensions,
+then corrects any observed position change. An unchanged original display
+restores the exact original frame, including previously partly off-screen
+geometry. A changed/missing original display uses the existing relative-position
+fallback with the original size; this is not proof of an unchanged-layout
+restore. If the OS cannot restore those dimensions, or identity/geometry becomes
+unknown, the operation fails and retains its recovery record and visibility
+pin. Only verified full-frame restoration releases them. Reconcile the exact
+window before deciding on a later explicit restore or release; do not blindly
+replay an uncertain operation.
+
+A window
 born on the hidden display has no earlier physical position. Close that owned
 window before normal owner exit, or accept the existing physical-display fallback
 when explicitly restoring it. True owner exit attempts restoration and the display
 cannot survive its process. Crash/logout/reboot persistence is not provided.
+
+### 实体屏 fallback 的完整尺寸
+
+原屏及bounds未变时恢复真实原frame（允许原本部分出屏）。原屏消失或变化后已不能容纳原尺寸时，fallback优先能容原尺寸加既有40pt余量的实体屏：main可容则main，否则面积最大的可容屏。无可容屏则尽力选最大实体屏，并仍以完整frame读回为成功条件；不缩小原尺寸冒称恢复。fallback位置夹至40pt可用区以避开菜单栏/边缘约束。没有实体屏或写入/读回未确认时保留恢复记录和pin。

@@ -35,7 +35,7 @@ public enum ToolDefinitions {
 
     static func configured(virtualDisplayEnabled: Bool) -> [ToolDefinition] {
         guard !virtualDisplayEnabled else { return definitions }
-        return definitions.map { tool in
+        return definitions.filter { $0.name != PersistentDisplayBootstrap.definition.name }.map { tool in
             guard tool.name == "get_app_state" else { return tool }
             var schema = tool.inputSchema
             var properties = schema["properties"] as? [String: Any] ?? [:]
@@ -46,6 +46,7 @@ public enum ToolDefinitions {
     }
 
     private static let definitions: [ToolDefinition] = [
+        PersistentDisplayBootstrap.definition,
         ToolDefinition(
             name: "click",
             description: "Click an element by index or pixel coordinates from screenshot. This tool is part of plugin `Computer Use`.",
