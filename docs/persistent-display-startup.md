@@ -15,8 +15,13 @@ turn end and later transient clients do not remove the retained screen. The
 normal owner exit, logout or OS restart ends that process-owned screen; a login
 host requests bootstrap again when the user session starts.
 
-The text result is JSON protocol 1 with `display_id`, `namespace`, `persistent`
-and `bounds` (`x`, `y`, `width`, `height`). Hosts must rediscover current physical
+The text result is JSON protocol 2 with `geometry:"fit_restore_v1"`, `display_id`,
+`namespace`, `persistent` and `bounds` (`x`, `y`, `width`, `height`). This capability
+means the same owner's exact placement chain stores the full original frame,
+fits oversized windows and confirms full-frame restoration. Hosts relying on
+that behavior must confirm both protocol and geometry marker from the actual
+owner before starting window claims; a protocol 1 receipt proves only the older
+position-restoration contract. Hosts must rediscover current physical
 identity and geometry after creation, before capturing original window frames.
 A display ID from a previous boot is never a stable identity. WindowServer can
 translate global coordinates when creating a screen; this operation preserves
@@ -33,3 +38,6 @@ recover a timed-out temporary proxy.
 Validation includes the opt-in/schema/receipt unit tests and the installed login
 host cold-start acceptance recorded by the consuming feature. Existing test
 expectations now include the already-shipped exact-window `release` option.
+The new geometry contract's non-GUI tests do not prove installed oversized-window
+acceptance; that requires the provider and consuming host to be switched and
+observed together. See [exact placement](exact-window-placement.md).

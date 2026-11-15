@@ -24,7 +24,8 @@ final class PersistentDisplayBootstrapTests: XCTestCase {
     func testReceiptIdentifiesTheLiveNamespaceScreen() throws {
         let receipt = PersistentDisplayReadiness(id: 42, bounds: CGRect(x: 5000, y: 0, width: 1920, height: 1080), namespace: "persistent-display")
         let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(receipt.rendered().utf8)) as? [String: Any])
-        XCTAssertEqual(value["protocol"] as? Int, 1)
+        XCTAssertEqual(value["protocol"] as? Int, 2)
+        XCTAssertEqual(value["geometry"] as? String, "fit_restore_v1")
         XCTAssertEqual(value["display_id"] as? Int, 42)
         XCTAssertEqual(value["namespace"] as? String, "persistent-display")
         XCTAssertEqual(value["persistent"] as? Bool, true)
