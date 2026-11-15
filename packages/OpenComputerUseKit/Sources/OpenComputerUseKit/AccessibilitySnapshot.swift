@@ -2453,19 +2453,18 @@ extension SnapshotBuilder {
         }
 
         let appElement = AXUIElementCreateApplication(app.pid)
-        AXUIElementSetMessagingTimeout(appElement, 0.1)
+        AXUIElementSetMessagingTimeout(appElement, windowID == nil ? 0.1 : 0.5)
         _ = enableBestEffortAccessibilityModes(appElement)
         let systemWide = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(systemWide, 0.1)
-        // This object changes the process-wide timeout, not just one AX reference.
-        defer { AXUIElementSetMessagingTimeout(systemWide, 0) }
-        let focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
+        // Exact binding uses per-object limits and never changes this process's
+        // global AX timeout. Preserve the existing unscoped query policy.
+        if windowID == nil { AXUIElementSetMessagingTimeout(systemWide, 0.1) }
+        defer { if windowID == nil { AXUIElementSetMessagingTimeout(systemWide, 0) } }
+        let focusedApplication = windowID == nil ? copyElement(systemWide, attribute: kAXFocusedApplicationAttribute) : nil
 
         let rootWindow: AXUIElement
-        if let windowID, let named = windowElement(for: windowID, appElement: appElement) {
-            rootWindow = named
-        } else if let windowID {
-            throw ComputerUseError.stateUnavailable("window_id \(windowID) is not a current window of \(app.bundleIdentifier ?? app.name).")
+        if let windowID {
+            rootWindow = try ExactAXWindowBinding.resolve(app: app, appElement: appElement, windowID: windowID)
         } else if let focused = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide) {
             rootWindow = focused
         } else {
@@ -2473,7 +2472,9 @@ extension SnapshotBuilder {
         }
 
         AXUIElementSetMessagingTimeout(rootWindow, 0.1)
-        guard let axWindowID = SkyLightSPI.shared.windowID(for: rootWindow),
+        // The explicit ID was already identity-checked by the bounded resolver.
+        // Do not repeat its private AX ID read under the short traversal timeout.
+        guard let axWindowID = windowID ?? SkyLightSPI.shared.windowID(for: rootWindow),
               let meta = WindowCapture.resolve(for: app.pid, exactWindowID: axWindowID, capture: false) else {
             throw ComputerUseError.stateUnavailable("query could not bind this AX window to its current window geometry")
         }
@@ -2534,12 +2535,6 @@ extension SnapshotBuilder {
         return false
     }
 
-    private static func windowElement(for windowID: CGWindowID, appElement: AXUIElement) -> AXUIElement? {
-        let isWindow = { SkyLightSPI.shared.windowID(for: $0) == windowID }
-        // AXWindows leaves sheets out; a sheet is found as the focused window.
-        return copyArray(appElement, attribute: kAXWindowsAttribute)?.first(where: isWindow)
-            ?? copyElement(appElement, attribute: kAXFocusedWindowAttribute).flatMap { isWindow($0) ? $0 : nil }
-    }
 
     // Attributes read for every visited node, in one batched IPC call. Position
     // and size ride along so we can (a) skip descending into off-screen subtrees
