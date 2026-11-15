@@ -138,7 +138,7 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
   });
 }
 
-test("app-bound API forwards explicitly enabled background-operation options", async t => {
+test("app-bound API forwards physical right-screen options", async t => {
   const previous = process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
   process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = "true";
   t.after(() => {
@@ -150,7 +150,7 @@ test("app-bound API forwards explicitly enabled background-operation options", a
   const session = new PersistentJavaScriptSession({ native });
   const result = await session.run(`
     var backgroundApp = await cua.getApp("Text");
-    await backgroundApp.getAXState({ emit: false, textLimit: "max", maxTreeNodes: 42, maxTreeDepth: 7, windowPlacement: "agent_display" });
+    await backgroundApp.getAXState({ emit: false, textLimit: "max", maxTreeNodes: 42, maxTreeDepth: 7, windowId: 123, windowPlacement: "right_display" });
     await backgroundApp.getScreenshot({ emit: false, windowPlacement: "keep" });
     await backgroundApp.getAXStateAndScreenshot({ emit: false, windowPlacement: "restore" });
     await backgroundApp.typeText("hello", { keyMethod: "sky_key" });
@@ -166,7 +166,8 @@ test("app-bound API forwards explicitly enabled background-operation options", a
       text_limit: "max",
       max_tree_nodes: 42,
       max_tree_depth: 7,
-      window_placement: "agent_display",
+      window_id: 123,
+      window_placement: "right_display",
     },
   });
   assert.deepEqual(native.calls[2], {
@@ -445,18 +446,18 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
 test("virtual display guidance follows explicit host configuration", () => {
   const env = { OPEN_COMPUTER_USE_CONFIG_FILE: "/nonexistent/ocu-test-config.json" };
   assert.equal(virtualDisplayEnabled(env, "darwin"), false);
-  assert.doesNotMatch(computerUseGuidance(env, "darwin"), /windowPlacement/);
+  assert.match(computerUseGuidance(env, "darwin"), /right_display/);
   const enabled = { ...env, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED: "true" };
   assert.match(computerUseGuidance(enabled, "darwin"), /windowPlacement/);
-  assert.equal(virtualDisplayEnabled({ ...enabled, OPEN_COMPUTER_USE_CONFIG_FILE: "relative" }, "darwin"), true);
+  assert.equal(virtualDisplayEnabled({ ...enabled, OPEN_COMPUTER_USE_CONFIG_FILE: "relative" }, "darwin"), false);
   assert.equal(virtualDisplayEnabled({ ...enabled, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED: "1" }, "darwin"), false);
   assert.doesNotMatch(computerUseGuidance(enabled, "linux"), /windowPlacement/);
   assert.doesNotMatch(computerUseGuidance(enabled, "win32"), /windowPlacement/);
 });
 
-test("disabled virtual displays reject stale JS options before native dispatch", async t => {
+for (const staleEnabled of ["false", "true"]) test(`retired virtual displays reject stale ${staleEnabled} JS options before native dispatch`, async t => {
   const previous = process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
-  process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = "false";
+  process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = staleEnabled;
   t.after(() => {
     if (previous === undefined) delete process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
     else process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = previous;
@@ -468,7 +469,11 @@ test("disabled virtual displays reject stale JS options before native dispatch",
     await app.getAXState({ windowPlacement: "agent_display" });
   `);
   assert.equal(result.isError, true);
-  assert.match(result.content.at(-1).text, /disabled by virtualDisplay.enabled/);
+  assert.match(result.content.at(-1).text, /virtual displays are retired/);
+  assert.equal(native.calls.length, 0);
+  const missing = await session.run('await app.getAXState({ windowPlacement: "right_display" })');
+  assert.equal(missing.isError, true);
+  assert.match(missing.content.at(-1).text, /right_display requires windowId/);
   assert.equal(native.calls.length, 0);
   const restored = await session.run('await app.getAXState({ windowPlacement: "restore", emit: false });');
   assert.equal(restored.isError, false);

@@ -5,18 +5,14 @@ import XCTest
 final class PersistentDisplayBootstrapTests: XCTestCase {
     func testBootstrapIsAdvertisedOnlyWithExplicitDisplayConfiguration() {
         XCTAssertFalse(ToolDefinitions.configured(virtualDisplayEnabled: false).contains { $0.name == "ensure_agent_display" })
-        let tool = ToolDefinitions.configured(virtualDisplayEnabled: true).first { $0.name == "ensure_agent_display" }
-        XCTAssertNotNil(tool)
-        XCTAssertEqual(tool?.annotations["idempotentHint"] as? Bool, true)
-        XCTAssertEqual(tool?.annotations["readOnlyHint"] as? Bool, false)
-        XCTAssertEqual(tool?.inputSchema["additionalProperties"] as? Bool, false)
+        XCTAssertFalse(ToolDefinitions.configured(virtualDisplayEnabled: true).contains { $0.name == "ensure_agent_display" })
     }
     func testDisabledOrTransientConfigurationCannotBootstrap() {
         for config in [VirtualDisplayConfig(enabled: false, restoreOnSessionEnd: false),
                        VirtualDisplayConfig(enabled: true, restoreOnSessionEnd: true)] {
             XCTAssertThrowsError(try PersistentDisplayBootstrap.requireConfiguration(config))
         }
-        XCTAssertNoThrow(try PersistentDisplayBootstrap.requireConfiguration(.init(enabled: true, restoreOnSessionEnd: false)))
+        XCTAssertThrowsError(try PersistentDisplayBootstrap.requireConfiguration(.init(enabled: true, restoreOnSessionEnd: false)))
     }
     func testWindowArgumentsAreRejectedBeforeAnyDisplayOperation() {
         XCTAssertThrowsError(try ComputerUseToolDispatcher().callTool(name: "ensure_agent_display", arguments: ["window_id": 10]))

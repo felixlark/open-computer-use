@@ -6,6 +6,7 @@ import OpenComputerUseVirtualDisplayShim
 
 public enum WindowPlacement: String, CaseIterable, Sendable {
     case keep
+    case rightDisplay = "right_display"
     case agentDisplay = "agent_display"
     case restore
     case release
@@ -28,6 +29,9 @@ func parseWindowPlacement(_ rawValue: String?) throws -> WindowPlacement {
 
 func validateExactWindowPlacement(_ placement: WindowPlacement, windowID: CGWindowID?) throws {
     if windowID == 0 { throw ComputerUseError.invalidArguments("window_id must be positive") }
+    if placement == .rightDisplay && windowID == nil {
+        throw ComputerUseError.invalidArguments("window_placement right_display requires an explicit window_id")
+    }
     if placement == .release && windowID == nil {
         throw ComputerUseError.invalidArguments("window_placement release requires an explicit window_id")
     }

@@ -58,33 +58,8 @@ ocu config path
 | `image.captureTimeout` | `5` | ScreenCaptureKit 后备截图的超时，单位秒，范围 `0.01–300`。 | `ocu config set image.captureTimeout 10` |
 
 
-## 虚拟显示器（macOS，显式启用）
+## 最右物理屏放置（macOS）
 
-`virtualDisplay.enabled` 默认 `false`。关闭时，`get_app_state` 的 MCP schema 不包含
-`window_placement`，JS 使用提示不包含 `windowPlacement`，遮挡窗口提示也不推荐停放。
-旧客户端显式传入 `agent_display` 时，在查找应用或创建显示器之前报错。
+虚拟屏和预览已退役。旧配置或启用环境变量均不能重新创建虚拟屏。对已确认的 Agent 窗口，用精确 PID、`window_id` 和 `window_placement=right_display` 调用 `get_app_state`。普通观察保留；`restore`、`release` 仅用于清理旧归属记录。详见[当前放置约定](right-display.md)。
 
-通过 `ocu config set virtualDisplay.enabled true` 显式启用，或在调用进程设置
-`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED=true`。配置文件只接受 JSON 布尔值；环境变量
-只接受字面量 `true`/`false`，非法环境值关闭创建。优先级为环境变量、配置文件、默认值。
-Windows/Linux 始终不暴露这个参数。
-
-创建虚拟显示器会增加系统显示器，可能影响已有显示器布局。关闭使用
-`ocu config set virtualDisplay.enabled false`，同时移除启用它的环境变量；重新连接 MCP
-客户端以刷新缓存的 schema。已停放窗口仍可用显式 `restore` 恢复；默认情况下，
-`turn-ended`/连接清理也会恢复。关闭创建不会直接销毁仍承载窗口的显示器。
-升级后需重启旧版常驻进程。
-
-独立 Agent 工作区可设 `virtualDisplay.restoreOnSessionEnd=false`，命令为
-`ocu config set virtualDisplay.restoreOnSessionEnd false`，环境变量为
-`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END=false`。该值在每次停放时记录；
-窗口位置和遮挡状态由常驻 macOS app-agent 持有，跨回合结束、CLI/MCP 断连保留。
-新客户端仍须先取新快照；再次停放会采用新配置并保留原始位置。
-
-显式 `window_placement=restore` 会归还该 App 的停放窗口；真正退出后台进程时也会尽力恢复。
-这不保证崩溃、注销或重启后的隐藏状态。后续清理会移除已关闭或替换的目标；身份未核清时
-保留恢复记录。独立进程直接退出时无法继续持有显示器。
-
-回合结束广播通知名称按 app-agent socket 命名空间隔离。CLI Stop hook 与 MCP 启动器应设置
-相同的 `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE`；后台进程从实际 socket 路径派生监听名，
-不会依赖 LaunchServices 是否继承客户端环境。带命名空间的 hook 不广播给旧版默认实例。
+退出旧持有者前先迁出其中窗口；重连客户端刷新缓存 schema。历史虚拟屏字段仅保留读取及恢复兼容。

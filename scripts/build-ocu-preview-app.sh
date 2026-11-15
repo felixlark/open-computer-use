@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+echo "OCU virtual-display preview is retired. Agent windows use the rightmost physical screen." >&2
+exit 1
+
+# Historical packaging implementation below is retained for provenance.
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 preview_cache="${OCU_PREVIEW_CACHE_DIR:-${HOME}/Library/Caches/open-computer-use-preview}"
 preview_output="${OCU_PREVIEW_OUTPUT_DIR:-${preview_cache}/package}"

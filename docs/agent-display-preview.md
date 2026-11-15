@@ -1,3 +1,5 @@
+> Retired on 2026-11-15: virtual displays, persistent workspace and preview are no longer a supported runtime route. Use [physical right-screen placement](right-display.md). The content below is historical recovery evidence.
+
 # Read-only live virtual display preview (macOS)
 
 Open **Open Computer Use Preview.app**. The window shows the entire OCU virtual

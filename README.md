@@ -18,7 +18,7 @@ This project was inspired by OpenAI's [Codex Computer Use](https://openai.com/in
 I started this repo with my [harness template](https://github.com/iFurySt/harness-template), a template for quickly spinning up AI-first projects. It has been one of our most useful workflows lately, especially for nearly 100% AI-generated projects. I also wrote [a post](https://www.ifuryst.com/blog/2026/speedrunning-the-ai-era/) about the methodology behind it.
 
 
-A separate macOS [read-only live preview](docs/agent-display-preview.md) shows the entire OCU virtual display in a resizable window, with a menu-bar entry. Build it with `scripts/build-ocu-preview-app.sh`.
+The macOS virtual-display and preview routes are retired. Use [exact rightmost physical-screen placement](docs/right-display.md) for caller-confirmed Agent windows; ordinary computer use remains available.
 
 ## Demos
 

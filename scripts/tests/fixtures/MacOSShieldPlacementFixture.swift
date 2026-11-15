@@ -48,22 +48,7 @@ struct ShieldPlacementFixture {
         var exitCode: Int32 = 0
         do {
             if CommandLine.arguments.contains("--virtual-display") {
-                let id = ocu_virtual_display_create("OCU Shield Placement Test", 1920, 1080, 60, &handle)
-                guard id != 0, handle != nil else { throw GuardianError.message("Cannot create virtual display") }
-                settle(1)
-                var config: CGDisplayConfigRef?
-                guard CGBeginDisplayConfiguration(&config) == .success, let config else {
-                    throw GuardianError.message("Cannot begin virtual display placement")
-                }
-                let width = Int32(CGDisplayBounds(id).width)
-                guard width > 0, CGConfigureDisplayOrigin(config, id, -width, 0) == .success else {
-                    CGCancelDisplayConfiguration(config)
-                    throw GuardianError.message("Cannot place test virtual display")
-                }
-                guard CGCompleteDisplayConfiguration(config, .forSession) == .success else {
-                    throw GuardianError.message("Cannot apply test virtual display placement")
-                }
-                settle(1)
+                throw GuardianError.message("OCU virtual-display test creation is retired")
             }
             guard NSScreen.screens.count >= 2 else { throw GuardianError.message("At least two screens required") }
             try surface.coverDisplays(message: "OCU shield placement test — closes automatically")

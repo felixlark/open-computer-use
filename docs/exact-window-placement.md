@@ -1,3 +1,5 @@
+> Retired on 2026-11-15: virtual displays, persistent workspace and preview are no longer a supported runtime route. Use [physical right-screen placement](right-display.md). The content below is historical recovery evidence.
+
 # Exact window placement (macOS)
 
 Use `get_app_state` with `window_id` to observe or manage one current window of a
