@@ -49,7 +49,7 @@ final class VirtualDisplayConfigTests: XCTestCase {
         XCTAssertEqual(AgentDisplay.shared.displayID, 0)
         try Data(#"{"virtualDisplay":{"enabled":true}}"#.utf8).write(to: file, options: .atomic)
         XCTAssertTrue(VirtualDisplayConfig.current.enabled)
-        XCTAssertEqual(placement()?["enum"] as? [String], ["keep", "agent_display", "restore"])
+        XCTAssertEqual(placement()?["enum"] as? [String], ["keep", "agent_display", "restore", "release"])
         setenv(VirtualDisplayConfig.environmentKey, "false", 1)
         XCTAssertNil(placement())
         unsetenv(VirtualDisplayConfig.environmentKey)

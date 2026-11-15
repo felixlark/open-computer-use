@@ -151,6 +151,20 @@ final class AgentDisplay: @unchecked Sendable {
         return parked.filter { $0.value.pid == pid }.map(\.key)
     }
 
+    /// Explicit login bootstrap; configuration is sampled under the lifecycle lock.
+    func ensureForHost() throws -> PersistentDisplayReadiness {
+        lock.lock()
+        defer { lock.unlock() }
+        let config = VirtualDisplayConfig.current
+        try PersistentDisplayBootstrap.requireConfiguration(config)
+        let bounds = try ensureDisplay(configuration: config)
+        retention.recordPark(restoreOnSessionEnd: config.restoreOnSessionEnd)
+        installExitHookIfNeeded()
+        let namespace = getenv(openComputerUseAppAgentSocketNamespaceEnvironmentKey)
+            .map { String(cString: $0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        return PersistentDisplayReadiness(id: displayID, bounds: bounds, namespace: namespace)
+    }
+
     /// Move `window` onto the agent display. Returns the display bounds.
     @discardableResult
     func park(windowID: CGWindowID, pid: pid_t, window: AXUIElement) throws -> CGRect {
@@ -380,8 +394,8 @@ final class AgentDisplay: @unchecked Sendable {
 
     // MARK: - Display lifecycle (call with lock held)
 
-    private func ensureDisplay() throws -> CGRect {
-        try VirtualDisplayConfig.current.requireEnabled()
+    private func ensureDisplay(configuration: VirtualDisplayConfig? = nil) throws -> CGRect {
+        try (configuration ?? .current).requireEnabled()
         if displayID != 0, let bounds = displayBounds, !bounds.isEmpty {
             return bounds
         }

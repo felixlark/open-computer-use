@@ -2030,7 +2030,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertThrowsError(try parseWindowPlacement("park")) { error in
             XCTAssertEqual(
                 (error as? ComputerUseError)?.errorDescription,
-                "Invalid window_placement 'park'. Expected one of: keep, agent_display, restore"
+                "Invalid window_placement 'park'. Expected one of: keep, agent_display, restore, release"
             )
         }
 

@@ -55,6 +55,11 @@ public final class ComputerUseToolDispatcher {
 
     private func dispatchTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
         switch name {
+        case "ensure_agent_display":
+            guard arguments.isEmpty else {
+                throw ComputerUseError.invalidArguments("ensure_agent_display takes no arguments")
+            }
+            return try service.ensureAgentDisplay()
         case "list_apps":
             return service.listApps()
         case "query":
