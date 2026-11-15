@@ -37,24 +37,24 @@ final class VirtualDisplayConfigTests: XCTestCase {
             let schema = ToolDefinitions.all.first { $0.name == "get_app_state" }?.inputSchema
             return (schema?["properties"] as? [String: Any])?["window_placement"] as? [String: Any]
         }
-        XCTAssertNil(placement())
+        XCTAssertEqual(placement()?["enum"] as? [String], ["keep", "right_display", "restore", "release"])
         let dispatcher = ComputerUseToolDispatcher()
         XCTAssertThrowsError(try dispatcher.callTool(name: "get_app_state", arguments: ["app": "does-not-exist", "window_placement": "agent_display"])) { error in
-            XCTAssertTrue(error.localizedDescription.contains("disabled by virtualDisplay.enabled"))
+            XCTAssertTrue(error.localizedDescription.contains("virtual displays are retired"))
         }
         // Exercise the lower-level entry without creating a display or touching a real window.
         XCTAssertThrowsError(try AgentDisplay.shared.park(windowID: 0, pid: getpid(), window: AXUIElementCreateApplication(getpid()))) { error in
-            XCTAssertTrue(error.localizedDescription.contains("disabled by virtualDisplay.enabled"))
+            XCTAssertTrue(error.localizedDescription.contains("virtual displays are retired"))
         }
         XCTAssertEqual(AgentDisplay.shared.displayID, 0)
         try Data(#"{"virtualDisplay":{"enabled":true}}"#.utf8).write(to: file, options: .atomic)
         XCTAssertTrue(VirtualDisplayConfig.current.enabled)
-        XCTAssertEqual(placement()?["enum"] as? [String], ["keep", "agent_display", "restore", "release"])
+        XCTAssertEqual(placement()?["enum"] as? [String], ["keep", "right_display", "restore", "release"])
         setenv(VirtualDisplayConfig.environmentKey, "false", 1)
-        XCTAssertNil(placement())
+        XCTAssertEqual(placement()?["enum"] as? [String], ["keep", "right_display", "restore", "release"])
         unsetenv(VirtualDisplayConfig.environmentKey)
         try Data(#"{"virtualDisplay":{"enabled":false}}"#.utf8).write(to: file, options: .atomic)
-        XCTAssertNil(placement())
+        XCTAssertEqual(placement()?["enum"] as? [String], ["keep", "right_display", "restore", "release"])
         try Data("broken".utf8).write(to: file, options: .atomic)
         XCTAssertFalse(VirtualDisplayConfig.current.enabled)
         XCTAssertTrue(keys.contains(VirtualDisplayConfig.environmentKey), "app-agent requests must clear missing overrides")

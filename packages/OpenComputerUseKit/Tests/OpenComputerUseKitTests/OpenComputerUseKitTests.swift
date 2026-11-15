@@ -2030,7 +2030,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertThrowsError(try parseWindowPlacement("park")) { error in
             XCTAssertEqual(
                 (error as? ComputerUseError)?.errorDescription,
-                "Invalid window_placement 'park'. Expected one of: keep, agent_display, restore, release"
+                "Invalid window_placement 'park'. Expected one of: keep, right_display, agent_display, restore, release"
             )
         }
 
@@ -2042,7 +2042,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         for name in ["get_app_state"] {
             let tool = ToolDefinitions.configured(virtualDisplayEnabled: true).first { $0.name == name }
             let properties = tool?.inputSchema["properties"] as? [String: Any]
-            XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore", "release"])
+            XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "right_display", "restore", "release"])
         }
     }
 

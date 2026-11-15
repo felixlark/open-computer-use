@@ -3,7 +3,7 @@
 
 Compile production placement/coverage code, adding only passive observations.
 --baseline-ref builds that Git version and expects the secondary-screen init offset.
---virtual-display temporarily creates a test-owned screen to the left, then removes it.
+--virtual-display is retired and rejected before compilation, including baseline runs.
 """
 import argparse
 import json
@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--baseline-ref")
     parser.add_argument("--virtual-display", action="store_true")
     args = parser.parse_args()
+    if args.virtual_display:
+        parser.error("OCU virtual-display creation is retired; use existing physical displays")
 
     def source(path):
         if args.baseline_ref:

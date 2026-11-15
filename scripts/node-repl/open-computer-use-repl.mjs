@@ -9,7 +9,6 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { inspectConfig } from "./ocu-config.mjs";
 
 const require = createRequire(import.meta.url);
 // The js call whose code is running. Timers and promises carry it, so a callback
@@ -54,17 +53,13 @@ The runtime exposes an asynchronous app-bound API:
 
 After actions, call \`getAXState()\` in the same js invocation when the next decision depends on the updated UI. Re-derive element indexes from fresh state after navigation or layout changes. Prefer element indexes over coordinates. Open Computer Use keeps its existing local safety gates, including password-manager denial and explicit authorization for global pointer fallbacks.`;
 
-export function virtualDisplayEnabled(environment = process.env, platform = process.platform) {
-  if (platform !== "darwin") return false;
-  const override = environment.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
-  if (override !== undefined) return override === "true";
-  try { return inspectConfig(environment).values["virtualDisplay.enabled"] === true; }
-  catch { return false; }
+export function virtualDisplayEnabled() {
+  return false; // Retired, including stale enable overrides.
 }
 
 export function computerUseGuidance(environment = process.env, platform = process.platform) {
-  return virtualDisplayEnabled(environment, platform)
-    ? COMPUTER_USE_GUIDANCE
+  return platform === "darwin"
+    ? COMPUTER_USE_GUIDANCE + "\nAgent windows use exact windowId and windowPlacement: right_display on the rightmost physical screen. Virtual displays are retired."
     : COMPUTER_USE_GUIDANCE.replace(", windowId?, windowPlacement?", "");
 }
 
@@ -278,10 +273,10 @@ function optionsToSnapshotArgs(options = {}) {
     if (!Number.isInteger(options.windowId) || options.windowId <= 0 || options.windowId > 4294967295) throw new Error("windowId must be a positive UInt32");
     args.window_id = options.windowId;
   }
-  if (options.windowPlacement === "release" && options.windowId === undefined) throw new Error("release requires windowId");
+  if (["release", "right_display"].includes(options.windowPlacement) && options.windowId === undefined) throw new Error(`${options.windowPlacement} requires windowId`);
   if (options.windowPlacement !== undefined) {
-    if (options.windowPlacement === "agent_display" && !virtualDisplayEnabled()) {
-      throw new Error("windowPlacement 'agent_display' is disabled by virtualDisplay.enabled");
+    if (options.windowPlacement === "agent_display") {
+      throw new Error("OCU virtual displays are retired; use exact windowPlacement right_display");
     }
     args.window_placement = options.windowPlacement;
   }

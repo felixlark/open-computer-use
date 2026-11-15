@@ -1,3 +1,5 @@
+> Retired on 2026-11-15: virtual displays, persistent workspace and preview are no longer a supported runtime route. Use [physical right-screen placement](right-display.md). The content below is historical recovery evidence.
+
 # Persistent display host bootstrap
 
 `ensure_agent_display` is a macOS tool for login hosts. It creates or reuses the

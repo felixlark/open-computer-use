@@ -50,9 +50,9 @@ struct VirtualDisplayConfig: Equatable {
     }
 
     func requireEnabled() throws {
-        guard enabled else {
-            throw ComputerUseError.message("window_placement 'agent_display' is disabled by virtualDisplay.enabled")
-        }
+        // The virtual-display route has been retired. Old MCP processes can
+        // retain enabled=true in their environment; that is not an opt-in.
+        throw ComputerUseError.message("OCU virtual displays are retired; use exact window_placement=right_display on the rightmost physical display")
     }
 
     private static func warn(_ message: String) {

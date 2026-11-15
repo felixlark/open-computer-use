@@ -728,6 +728,13 @@ public final class ComputerUseService {
             throw ComputerUseError.message("window_placement '\(windowPlacement.rawValue)' is not supported for fixture apps")
         }
         switch windowPlacement {
+        case .rightDisplay:
+            guard let windowID, let element = snapshot.windowElement else {
+                throw ComputerUseError.invalidArguments("right_display requires an exact window_id")
+            }
+            try RightDisplayPlacement.move(windowID: windowID, pid: snapshot.app.pid, window: element)
+            // A prior parked record must not undo this placement on owner exit.
+            _ = try AgentDisplay.shared.release(windowID: windowID, pid: snapshot.app.pid)
         case .agentDisplay:
             guard var selectedID = snapshot.targetWindowID, var element = snapshot.windowElement else {
                 throw ComputerUseError.stateUnavailable("window_placement agent_display requires a target window")

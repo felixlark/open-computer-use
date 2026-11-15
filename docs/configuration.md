@@ -58,42 +58,8 @@ You can use `open-computer-use` in place of `ocu`.
 | `image.captureTimeout` | `5` | ScreenCaptureKit fallback capture timeout, in seconds. Range `0.01–300`. | `ocu config set image.captureTimeout 10` |
 
 
-## Virtual displays (macOS, opt-in)
+## Physical right-screen placement (macOS)
 
-`virtualDisplay.enabled` defaults to `false`. While disabled, `get_app_state` omits
-`window_placement` from its MCP schema, JS guidance omits `windowPlacement`, and
-covered-window hints do not recommend parking windows. Stale explicit
-`agent_display` calls fail before app lookup or virtual display creation.
+Virtual displays and preview are retired. Stale enable configuration or environment values cannot create a display. Use exact `get_app_state` with the confirmed Agent PID, `window_id` and `window_placement=right_display`. Ordinary observation remains available. `restore` and `release` only drain legacy records. See [the current placement contract](right-display.md).
 
-Enable deliberately with `ocu config set virtualDisplay.enabled true`, or set
-`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED=true` in the caller's environment.
-Only literal `true`/`false` environment values are accepted; invalid values disable
-creation. The config file requires a JSON boolean. Environment overrides take
-priority over the file and defaults. Windows/Linux never advertise this parameter.
-
-Virtual displays add a monitor to the system arrangement and can affect existing
-monitor layouts. To disable, use `ocu config set virtualDisplay.enabled false` and
-remove any enabling environment override. Reconnect clients to refresh their tool
-schema. Existing parked windows can still be restored using an explicit `restore`
-call. By default, `turn-ended` and connection cleanup also restore them; disabling
-creation does not destroy a display while it still holds windows. Old running
-binaries must be restarted after upgrading.
-
-For a dedicated agent workspace, set `virtualDisplay.restoreOnSessionEnd=false`
-(`ocu config set virtualDisplay.restoreOnSessionEnd false`, or environment
-`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_RESTORE_ON_SESSION_END=false`). The setting is
-recorded when each window is parked. Its placement and occlusion pin then belong
-to the long-lived macOS app agent, surviving turn-end notifications and CLI/MCP
-client disconnects. Each new client still needs a fresh snapshot before acting.
-Re-parking a window adopts the current setting without losing its original position.
-
-Explicit `window_placement=restore` returns the application's parked windows;
-normal owner-process exit also attempts restoration. This is not persistence
-across a process crash, logout or reboot. Closed/replaced targets are pruned on
-the next cleanup, and an unverified identity retains its recovery record.
-Standalone runtimes cannot retain a display after their owning process exits.
-
-Distributed Stop notifications use the app-agent socket namespace in their name.
-Pass the same `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE` to the CLI Stop hook and
-MCP launcher; the app agent derives its listener name from its actual socket path.
-Namespaced hooks do not broadcast to older unnamespaced agents.
+Old owners must drain their windows before shutdown; reconnect clients to refresh cached schemas. Historical virtual configuration fields remain readable for recovery compatibility.

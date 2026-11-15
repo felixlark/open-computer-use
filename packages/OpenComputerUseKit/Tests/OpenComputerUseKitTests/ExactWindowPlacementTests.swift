@@ -8,7 +8,7 @@ final class ExactWindowPlacementTests: XCTestCase {
         let tool = try XCTUnwrap(ToolDefinitions.configured(virtualDisplayEnabled: true).first { $0.name == "get_app_state" })
         let properties = try XCTUnwrap(tool.inputSchema["properties"] as? [String: Any])
         XCTAssertNotNil(properties["window_id"])
-        XCTAssertEqual((properties["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore", "release"])
+        XCTAssertEqual((properties["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "right_display", "restore", "release"])
         for mode in WindowPlacement.allCases { XCTAssertNoThrow(try validateExactWindowPlacement(mode, windowID: 42)) }
         XCTAssertThrowsError(try validateExactWindowPlacement(.release, windowID: nil))
         XCTAssertThrowsError(try validateExactWindowPlacement(.restore, windowID: 0))
