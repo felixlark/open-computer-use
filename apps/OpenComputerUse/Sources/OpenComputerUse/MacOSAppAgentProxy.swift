@@ -23,6 +23,14 @@ private func onAppKitRunLoop(_ body: @escaping @MainActor @Sendable () -> Void) 
     CFRunLoopWakeUp(loop)
 }
 
+// A stopped RPC client must not take the persistent display owner down with
+// SIGPIPE. Keep protection on these sockets, not the process-wide signal mask.
+private func protectAppAgentSocket(_ fd: Int32) -> Bool {
+    var enabled: Int32 = 1
+    return setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled,
+                      socklen_t(MemoryLayout<Int32>.size)) == 0
+}
+
 enum MacOSAppAgentProxy {
     static func isAgentInvocation(arguments: [String]) -> Bool {
         arguments.first == appAgentCommand
@@ -344,6 +352,11 @@ private final class AppAgentSocketListener: @unchecked Sendable {
                 continue
             }
 
+            guard protectAppAgentSocket(clientFD) else {
+                close(clientFD)
+                continue
+            }
+
             Thread.detachNewThread {
                 AppAgentConnection(fileDescriptor: clientFD).run()
             }
@@ -645,6 +658,10 @@ private final class AppAgentSocketClient: @unchecked Sendable {
     static func connect(path: String) -> AppAgentSocketClient? {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
+            return nil
+        }
+        guard protectAppAgentSocket(fd) else {
+            close(fd)
             return nil
         }
 
