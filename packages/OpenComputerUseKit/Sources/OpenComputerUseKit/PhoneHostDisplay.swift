@@ -156,7 +156,7 @@ public final class PhoneHostDisplay: @unchecked Sendable {
                     guard let original = context.windowBounds else { throw ComputerUseError.stateUnavailable("phone window bounds unavailable") }
                     var claim = current; claim.windowID = id
                     binding = claim; try save() // Preserve identity before uncertain AX writes.
-                    let target = AgentWindowGeometry.fittedFrame(original: original, display: area)
+                    let target = CGRect(x: area.minX + 40, y: area.minY + 40, width: 480, height: 600)
                     func read() -> CGRect? {
                         guard (try? host(claim)) != nil, SkyLightSPI.shared.windowID(for: context.windowElement) == id else { return nil }
                         return windowFrame(claim)
