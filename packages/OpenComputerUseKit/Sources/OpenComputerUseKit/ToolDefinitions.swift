@@ -35,7 +35,7 @@ public enum ToolDefinitions {
 
     static func configured(virtualDisplayEnabled: Bool) -> [ToolDefinition] {
         // Retirement also applies to stale clients carrying enable overrides.
-        definitions.filter { $0.name != PersistentDisplayBootstrap.definition.name }
+        definitions.filter { $0.name != PersistentDisplayBootstrap.definition.name } + [PhoneHostDisplay.definition]
     }
 
     private static let definitions: [ToolDefinition] = [

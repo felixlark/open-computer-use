@@ -55,6 +55,8 @@ public final class ComputerUseToolDispatcher {
 
     private func dispatchTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
         switch name {
+        case "phone_host_display":
+            return try PhoneHostDisplay.shared.call(arguments)
         case "ensure_agent_display":
             guard arguments.isEmpty else {
                 throw ComputerUseError.invalidArguments("ensure_agent_display takes no arguments")

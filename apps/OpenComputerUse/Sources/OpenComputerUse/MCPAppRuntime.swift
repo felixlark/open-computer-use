@@ -41,6 +41,16 @@ final class MCPAppRuntime: NSObject, NSApplicationDelegate {
         Thread.detachNewThreadSelector(#selector(processStandardIO), toTarget: self, with: nil)
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // An in-flight AX call can need main while holding the display lock.
+        // Never wait for that lock on the AppKit thread.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let allowed = PhoneHostDisplay.shared.prepareNormalTermination()
+            Task { @MainActor in NSApp.reply(toApplicationShouldTerminate: allowed) }
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Process-exit hooks restore placement/pins. Do not block main behind
         // an in-flight tool that may still need the main queue.

@@ -176,6 +176,7 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
     private let socketPath: String
     private var listener: AppAgentSocketListener?
     private var turnEndedObserver: NSObjectProtocol?
+    private var phoneSignalSources: [DispatchSourceSignal] = []
 
     private init(socketPath: String) {
         self.socketPath = socketPath
@@ -191,6 +192,17 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if URL(fileURLWithPath: socketPath).lastPathComponent == openComputerUseAppAgentSocketFileName(namespace: "smart-shadow-phone-host") {
+            PhoneHostDisplay.shared.prepareDedicatedOwner()
+            for value in [SIGTERM, SIGINT] {
+                signal(value, SIG_IGN)
+                let source = DispatchSource.makeSignalSource(signal: value, queue: .global(qos: .userInitiated))
+                source.setEventHandler {
+                    if PhoneHostDisplay.shared.prepareNormalTermination() { Task { @MainActor in NSApp.terminate(nil) } }
+                }
+                source.resume(); phoneSignalSources.append(source)
+            }
+        }
         turnEndedObserver = DistributedNotificationCenter.default().addObserver(
             forName: openComputerUseTurnEndedNotification(forSocketFileName: URL(fileURLWithPath: socketPath).lastPathComponent),
             object: nil,
@@ -212,6 +224,16 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
             writeAgentError(error)
             NSApp.terminate(nil)
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // An in-flight AX call can need main while holding the display lock.
+        // Never wait for that lock on the AppKit thread.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let allowed = PhoneHostDisplay.shared.prepareNormalTermination()
+            Task { @MainActor in NSApp.reply(toApplicationShouldTerminate: allowed) }
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -383,6 +405,7 @@ private final class AppAgentConnection: @unchecked Sendable {
                     "buildIdentifier": appAgentBuildIdentifier,
                 ]
             case "terminate":
+                guard PhoneHostDisplay.shared.prepareNormalTermination() else { return ["error": "phone_host_window_still_live"] }
                 Task { @MainActor in
                     NSApp.terminate(nil)
                 }
