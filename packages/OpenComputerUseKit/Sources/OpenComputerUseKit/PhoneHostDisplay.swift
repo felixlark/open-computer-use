@@ -21,6 +21,32 @@ public final class PhoneHostDisplay: @unchecked Sendable {
     private let serial: UInt32 = 0x50484F4E
     private var settleSeconds: Double = 0
     private var lastFailure: String?
+    private var topologyPhase: PhoneHostDisplayTopology.Phase = .unattempted
+    private var priorTopology: PhoneHostDisplayTopology.Snapshot?
+    private var lastTopology: [String: Any]?
+
+    private func recordTopology() {
+        lastTopology = ["owned_id": displayID, "main_id": CGMainDisplayID(),
+            "online": displayID != 0 && CGDisplayIsOnline(displayID) != 0,
+            "active": displayID != 0 && CGDisplayIsActive(displayID) != 0,
+            "mirror_of": displayID == 0 ? 0 : CGDisplayMirrorsDisplay(displayID),
+            "mirrored": displayID != 0 && CGDisplayIsInMirrorSet(displayID) != 0]
+    }
+    private func currentTopologyReady() -> Bool {
+        guard topologyPhase.mayPark else { return false }
+        let area = bounds()
+        let originalPreserved = priorTopology.flatMap { before in
+            (try? PhoneHostDisplayTopology.Snapshot.read()).map { $0.preserving(before, owned: displayID) }
+        } ?? false
+        let valid = area.map { PhoneHostDisplayPolicy.fitsPhone(width: $0.width, height: $0.height) } ?? false
+        let ready = topologyPhase.validate(valid && originalPreserved && CGDisplayIsActive(displayID) != 0
+            && CGMainDisplayID() != displayID && CGDisplayIsInMirrorSet(displayID) == 0)
+        if !ready {
+            lastFailure = "phone or original display topology changed after verification"
+            recordTopology()
+        }
+        return ready
+    }
 
     private func configure() throws {
         let env = OCUConfiguration.environment
@@ -115,42 +141,54 @@ public final class PhoneHostDisplay: @unchecked Sendable {
         return AgentWindowGeometry.valid(result) ? result : nil
     }
     private func ensure() throws {
-        if let area = bounds() {
-            guard topologyReady(area) else { throw ComputerUseError.stateUnavailable("phone display topology unconfirmed") }
+        if topologyPhase.mayPark {
+            guard currentTopologyReady() else { throw ComputerUseError.stateUnavailable("verified phone topology was lost") }
             return
         }
-        guard handle == nil else { throw ComputerUseError.stateUnavailable("phone display lost; close exact phone window before recovery") }
-        let deadline = ProcessInfo.processInfo.systemUptime + settleSeconds
-        var next: UnsafeMutableRawPointer?
-        // HiDPI may halve logical dimensions. The selected 480x600 window plus
-        // its 40-point inset must fit even with that logical scale.
-        let id = ocu_virtual_display_create_with_serial("SmartShadow Phone Host", 1920, 1440, 60, serial, &next)
-        guard id != 0, let next else {
-            lastFailure = "phone display creation failed: " + String(cString: ocu_virtual_display_creation_diagnostic())
-            throw ComputerUseError.stateUnavailable(lastFailure!)
+        guard topologyPhase.mayBegin, handle == nil else {
+            throw ComputerUseError.stateUnavailable("phone topology attempt ended; close exact phone window before explicit provider recovery")
         }
-        handle = next; displayID = id
-        // Creation and WindowServer topology publication are asynchronous.
-        // Never let the following park observe the just-created display early.
-        repeat {
-            if let area = bounds(), topologyReady(area) {
-                lastFailure = nil
-                return
+        topologyPhase = .verifying
+        do {
+            let deadline = ProcessInfo.processInfo.systemUptime + settleSeconds
+            let before = try PhoneHostDisplayTopology.Snapshot.read()
+            priorTopology = before
+            var next: UnsafeMutableRawPointer?
+            let id = ocu_virtual_display_create_with_serial("SmartShadow Phone Host", 1920, 1440, 60, serial, &next)
+            guard id != 0, let next else {
+                throw ComputerUseError.stateUnavailable("phone display creation failed: " + String(cString: ocu_virtual_display_creation_diagnostic()))
             }
-            Thread.sleep(forTimeInterval: 0.025)
-        } while ProcessInfo.processInfo.systemUptime < deadline
-        lastFailure = "phone display topology unconfirmed"
-        guard CGMainDisplayID() != id, CGDisplayIsInMirrorSet(id) == 0 else {
-            ocu_virtual_display_destroy(next); handle = nil; displayID = 0
-            lastFailure = "phone display cannot be primary or mirrored"
-            throw ComputerUseError.stateUnavailable(lastFailure!)
+            handle = next; displayID = id
+            var configured = false
+            repeat {
+                recordTopology()
+                if CGDisplayIsOnline(id) != 0,
+                   CGDisplayVendorNumber(id) == 0x0CAC, CGDisplaySerialNumber(id) == serial {
+                    let current = try PhoneHostDisplayTopology.Snapshot.read()
+                    if !configured {
+                        let plan = try PhoneHostDisplayTopology.plan(before: before, after: current, owned: id)
+                        configured = true // A failed/unknown transaction is never retried.
+                        try PhoneHostDisplayTopology.apply(plan)
+                    } else if current.preserving(before, owned: id), let area = bounds(),
+                              CGDisplayIsActive(id) != 0, CGMainDisplayID() != id,
+                              CGDisplayIsInMirrorSet(id) == 0,
+                              PhoneHostDisplayPolicy.fitsPhone(width: area.width, height: area.height) {
+                        topologyPhase = .verified; lastFailure = nil
+                        recordTopology()
+                        return
+                    }
+                }
+                Thread.sleep(forTimeInterval: 0.025)
+            } while ProcessInfo.processInfo.systemUptime < deadline
+            throw ComputerUseError.stateUnavailable("phone display topology unconfirmed")
+        } catch {
+            topologyPhase = .failedUnknown
+            lastFailure = String(describing: error)
+            recordTopology()
+            // Retain the owned handle and claim. Only normal provider termination,
+            // after exact phone-window absence, may release this uncertain screen.
+            throw error
         }
-        throw ComputerUseError.stateUnavailable(lastFailure!)
-    }
-    private func topologyReady(_ area: CGRect) -> Bool {
-        displayID != 0 && CGDisplayIsActive(displayID) != 0 && CGMainDisplayID() != displayID
-            && CGDisplayIsInMirrorSet(displayID) == 0
-            && PhoneHostDisplayPolicy.fitsPhone(width: area.width, height: area.height)
     }
     public func call(_ raw: [String: Any]) throws -> ToolCallResult {
         let (action, request) = try PhoneHostDisplayPolicy.validate(raw)
@@ -183,8 +221,12 @@ public final class PhoneHostDisplay: @unchecked Sendable {
                     throw ComputerUseError.stateUnavailable("phone host was not ensured")
                 }
                 if action == "park" {
+                    // Also validate when an AX write or frame read throws/returns
+                    // unknown; short-circuit guards must not bypass the latch.
+                    defer { _ = currentTopologyReady() }
+                    let topologyConfirmed = currentTopologyReady()
                     guard current.windowID == nil || current.windowID == request.windowID,
-                          let id = request.windowID, let area = bounds(), topologyReady(area) else { throw ComputerUseError.stateUnavailable("phone display or window binding changed") }
+                          let id = request.windowID, let area = bounds(), topologyConfirmed else { throw ComputerUseError.stateUnavailable("phone display or window binding changed") }
                     let context = try SnapshotBuilder.resolveTargetWindow(for: app, windowID: id)
                     guard let original = context.windowBounds else { throw ComputerUseError.stateUnavailable("phone window bounds unavailable") }
                     var claim = current; claim.windowID = id
@@ -202,7 +244,8 @@ public final class PhoneHostDisplay: @unchecked Sendable {
                         setSize: { s in var s = s; try set(kAXSizeAttribute as String, AXValueCreate(.cgSize, &s)) },
                         settle: { predicate in let end = Date().addingTimeInterval(2); repeat { if predicate() { return true }; Thread.sleep(forTimeInterval: 0.025) } while Date() < end; return false })
                     try writer.apply(target, restoring: false)
-                    guard let frame = windowFrame(claim), let observed = bounds(), topologyReady(observed), observed.contains(frame) else { throw ComputerUseError.stateUnavailable("phone window residency unconfirmed") }
+                    let topologyAfterWrite = currentTopologyReady()
+                    guard let frame = windowFrame(claim), let observed = bounds(), topologyAfterWrite, observed.contains(frame) else { throw ComputerUseError.stateUnavailable("phone window residency unconfirmed") }
                     guard WindowOcclusionKeepAlive.shared.keepVisible(windowID: id, bounds: frame) else {
                         throw ComputerUseError.stateUnavailable("phone window render keep-alive unconfirmed")
                     }
@@ -211,7 +254,8 @@ public final class PhoneHostDisplay: @unchecked Sendable {
         }
         let area = bounds(), frame = binding.flatMap(windowFrame)
         let hostCurrent = (try? host(request)) != nil
-        let contained = hostCurrent && area != nil && topologyReady(area!) && frame != nil && area!.contains(frame!)
+        let topologyConfirmed = currentTopologyReady()
+        let contained = hostCurrent && area != nil && topologyConfirmed && frame != nil && area!.contains(frame!)
         let renderPinned = binding?.windowID.map { WindowOcclusionKeepAlive.shared.isPinned(windowID: $0) } ?? false
         let ready = PhoneHostDisplayPolicy.ready(contained: contained, renderPinned: renderPinned)
         func geometry(_ r: CGRect?) -> Any { guard let r else { return NSNull() }; return ["x": r.minX, "y": r.minY, "width": r.width, "height": r.height] }
@@ -228,6 +272,10 @@ public final class PhoneHostDisplay: @unchecked Sendable {
         observed["display_mirrored"] = displayID != 0 && CGDisplayIsInMirrorSet(displayID) != 0
         observed["observed_vendor"] = displayID == 0 ? 0 : CGDisplayVendorNumber(displayID)
         observed["observed_serial"] = displayID == 0 ? 0 : CGDisplaySerialNumber(displayID)
+        observed["prior_topology"] = priorTopology?.diagnostic as Any? ?? NSNull()
+        observed["current_topology"] = (try? PhoneHostDisplayTopology.Snapshot.read())?.diagnostic as Any? ?? NSNull()
+        observed["topology_phase"] = topologyPhase.rawValue
+        observed["last_topology"] = lastTopology as Any? ?? NSNull()
         observed["last_failure"] = lastFailure as Any? ?? NSNull()
         observed["virtual_display_supported"] = ocu_virtual_display_is_supported() != 0
         observed["terminating"] = terminating
