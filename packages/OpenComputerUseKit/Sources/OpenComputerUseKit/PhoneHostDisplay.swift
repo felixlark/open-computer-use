@@ -155,7 +155,7 @@ public final class PhoneHostDisplay: @unchecked Sendable {
     public func call(_ raw: [String: Any]) throws -> ToolCallResult {
         let (action, request) = try PhoneHostDisplayPolicy.validate(raw)
         lock.lock(); defer { lock.unlock() }
-        guard !terminating else { throw ComputerUseError.stateUnavailable("phone provider is terminating") }
+        guard !terminating || action == "status" else { throw ComputerUseError.stateUnavailable("phone provider is terminating") }
         guard !recoveryUnknown else { throw ComputerUseError.stateUnavailable("phone claim journal corrupt; preserve it for explicit reconciliation") }
         try configure()
         guard let admission, PhoneHostDisplayPolicy.admitted(request, by: admission) else {
@@ -230,6 +230,7 @@ public final class PhoneHostDisplay: @unchecked Sendable {
         observed["observed_serial"] = displayID == 0 ? 0 : CGDisplaySerialNumber(displayID)
         observed["last_failure"] = lastFailure as Any? ?? NSNull()
         observed["virtual_display_supported"] = ocu_virtual_display_is_supported() != 0
+        observed["terminating"] = terminating
         return .text(String(decoding: try JSONSerialization.data(withJSONObject: observed, options: [.sortedKeys]), as: UTF8.self))
     }
     static let definition = ToolDefinition(name: "phone_host_display", description: "Manage only the explicitly bound SmartShadow phone host display. Requires dedicated provider configuration. No physical fallback.",

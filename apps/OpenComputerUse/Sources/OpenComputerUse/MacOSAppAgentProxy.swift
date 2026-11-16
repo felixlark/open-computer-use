@@ -8,6 +8,21 @@ private let appAgentDisableEnvironmentKey = "OPEN_COMPUTER_USE_DISABLE_APP_AGENT
 private let appAgentProcessStartDate = Date()
 private let appAgentBuildIdentifier = Bundle.main.object(forInfoDictionaryKey: "OpenComputerUseBuildIdentifier") as? String ?? ""
 
+// AppKit's terminateLater enters a nested event loop. A MainActor Task that
+// calls terminate holds its executor until that loop returns, so another
+// MainActor Task cannot deliver the reply. A main-run-loop block can run in
+// the nested loop without waiting for that actor job or a dispatch block.
+private func onAppKitRunLoop(_ body: @escaping @MainActor @Sendable () -> Void) {
+    let loop = CFRunLoopGetMain()
+    // terminateLater specifically pumps NSModalPanelRunLoopMode (AppKit).
+    // One block registered for both modes runs once in whichever is current.
+    let modes = [RunLoop.Mode.default.rawValue, RunLoop.Mode.modalPanel.rawValue] as CFArray
+    CFRunLoopPerformBlock(loop, modes) {
+        MainActor.assumeIsolated { body() }
+    }
+    CFRunLoopWakeUp(loop)
+}
+
 enum MacOSAppAgentProxy {
     static func isAgentInvocation(arguments: [String]) -> Bool {
         arguments.first == appAgentCommand
@@ -198,7 +213,7 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
                 signal(value, SIG_IGN)
                 let source = DispatchSource.makeSignalSource(signal: value, queue: .global(qos: .userInitiated))
                 source.setEventHandler {
-                    if PhoneHostDisplay.shared.prepareNormalTermination() { Task { @MainActor in NSApp.terminate(nil) } }
+                    if PhoneHostDisplay.shared.prepareNormalTermination() { onAppKitRunLoop { NSApp.terminate(nil) } }
                 }
                 source.resume(); phoneSignalSources.append(source)
             }
@@ -231,7 +246,7 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
         // Never wait for that lock on the AppKit thread.
         DispatchQueue.global(qos: .userInitiated).async {
             let allowed = PhoneHostDisplay.shared.prepareNormalTermination()
-            Task { @MainActor in NSApp.reply(toApplicationShouldTerminate: allowed) }
+            onAppKitRunLoop { NSApp.reply(toApplicationShouldTerminate: allowed) }
         }
         return .terminateLater
     }
@@ -406,7 +421,7 @@ private final class AppAgentConnection: @unchecked Sendable {
                 ]
             case "terminate":
                 guard PhoneHostDisplay.shared.prepareNormalTermination() else { return ["error": "phone_host_window_still_live"] }
-                Task { @MainActor in
+                onAppKitRunLoop {
                     NSApp.terminate(nil)
                 }
                 return ["ok": true]
