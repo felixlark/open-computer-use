@@ -167,7 +167,7 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
 /// boundary. The exit hooks remain a final best-effort fallback.
 public func resetOpenComputerUseBackgroundWindowState() {
     BackgroundWindowStateTransaction.perform {
-        let retained = AgentDisplay.shared.endSession()
+        let retained = AgentDisplay.shared.endSession().union(PhoneHostDisplay.shared.retainedWindows())
         WindowOcclusionKeepAlive.shared.releaseAll(excluding: retained)
     }
 }
