@@ -14,6 +14,9 @@
 - (BOOL)applySettings:(id)settings;
 @end
 
+static __thread const char *creation_step = "not-requested";
+const char *ocu_virtual_display_creation_diagnostic(void) { return creation_step; }
+
 int ocu_virtual_display_is_supported(void) {
     return NSClassFromString(@"CGVirtualDisplayDescriptor") != nil
         && NSClassFromString(@"CGVirtualDisplay") != nil
@@ -26,6 +29,7 @@ uint32_t ocu_virtual_display_create(const char *name, uint32_t width, uint32_t h
 }
 
 uint32_t ocu_virtual_display_create_with_serial(const char *name, uint32_t width, uint32_t height, double refresh_rate, uint32_t serial_number, void **handle_out) {
+    creation_step = "unsupported-classes-or-output";
     if (handle_out == NULL || !ocu_virtual_display_is_supported()) {
         return 0;
     }
@@ -40,6 +44,7 @@ uint32_t ocu_virtual_display_create_with_serial(const char *name, uint32_t width
 
             // Scalars go through KVC so the runtime boxes them with the property's
             // real type encoding instead of a guessed C type.
+            creation_step = "descriptor";
             NSObject *descriptor = [[descriptorClass alloc] init];
             [descriptor setValue:[NSString stringWithUTF8String:name ?: "Open Computer Use"] forKey:@"name"];
             [descriptor setValue:@(width) forKey:@"maxPixelsWide"];
@@ -50,24 +55,29 @@ uint32_t ocu_virtual_display_create_with_serial(const char *name, uint32_t width
             [descriptor setValue:@(serial_number) forKey:@"serialNum"];
             [descriptor setValue:dispatch_get_main_queue() forKey:@"queue"];
 
+            creation_step = "display-init";
             id<OCUVirtualDisplay> display = [[displayClass alloc] initWithDescriptor:descriptor];
             if (display == nil) {
                 return 0;
             }
 
+            creation_step = "mode-and-settings";
             id<OCUVirtualDisplayMode> mode = [[modeClass alloc] initWithWidth:width height:height refreshRate:refresh_rate];
             NSObject *settings = [[settingsClass alloc] init];
             [settings setValue:@(1) forKey:@"hiDPI"];
             [settings setValue:@[mode] forKey:@"modes"];
+            creation_step = "apply-settings";
             if (![display applySettings:settings]) {
                 return 0;
             }
 
+            creation_step = "display-id";
             uint32_t displayID = [[(NSObject *)display valueForKey:@"displayID"] unsignedIntValue];
             if (displayID == 0) {
                 return 0;
             }
             *handle_out = (void *)CFBridgingRetain(display);
+            creation_step = "created";
             return displayID;
         }
     } @catch (NSException *exception) {

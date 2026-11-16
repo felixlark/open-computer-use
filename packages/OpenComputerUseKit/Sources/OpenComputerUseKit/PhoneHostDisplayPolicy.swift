@@ -47,6 +47,9 @@ struct PhoneHostDisplayPolicy {
         sameHost(request, admission) && (request.windowID == nil || request.windowID == admission.windowID)
     }
     static func ready(contained: Bool, renderPinned: Bool) -> Bool { contained && renderPinned }
+    static func fitsPhone(width: Double, height: Double) -> Bool {
+        width.isFinite && height.isFinite && width >= 480 + 40 && height >= 600 + 40
+    }
     static func enabled(document: [String: Any], namespace: String) -> Bool {
         guard namespace == self.namespace, let section = document["phoneHostDisplay"] as? [String: Any],
               let value = section["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
