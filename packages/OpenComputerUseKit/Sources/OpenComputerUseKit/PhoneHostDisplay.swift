@@ -168,21 +168,25 @@ public final class PhoneHostDisplay: @unchecked Sendable {
                         setPosition: { p in var p = p; try set(kAXPositionAttribute as String, AXValueCreate(.cgPoint, &p)) },
                         setSize: { s in var s = s; try set(kAXSizeAttribute as String, AXValueCreate(.cgSize, &s)) },
                         settle: { predicate in let end = Date().addingTimeInterval(2); repeat { if predicate() { return true }; Thread.sleep(forTimeInterval: 0.025) } while Date() < end; return false })
-                    _ = WindowOcclusionKeepAlive.shared.keepVisible(windowID: id, bounds: original)
                     try writer.apply(target, restoring: false)
-                    guard bounds()?.contains(windowFrame(claim) ?? .null) == true else { throw ComputerUseError.stateUnavailable("phone window residency unconfirmed") }
+                    guard let frame = windowFrame(claim), bounds()?.contains(frame) == true else { throw ComputerUseError.stateUnavailable("phone window residency unconfirmed") }
+                    guard WindowOcclusionKeepAlive.shared.keepVisible(windowID: id, bounds: frame) else {
+                        throw ComputerUseError.stateUnavailable("phone window render keep-alive unconfirmed")
+                    }
                 }
             }
         }
         let area = bounds(), frame = binding.flatMap(windowFrame)
         let hostCurrent = (try? host(request)) != nil
         let contained = hostCurrent && area != nil && frame != nil && area!.contains(frame!)
+        let renderPinned = binding?.windowID.map { WindowOcclusionKeepAlive.shared.isPinned(windowID: $0) } ?? false
+        let ready = PhoneHostDisplayPolicy.ready(contained: contained, renderPinned: renderPinned)
         func geometry(_ r: CGRect?) -> Any { guard let r else { return NSNull() }; return ["x": r.minX, "y": r.minY, "width": r.width, "height": r.height] }
         let value: [String: Any] = ["schema": "ocu.phone-host-display/v1", "action": action, "scope": "phone_host", "instance_id": request.instanceID,
             "pid": request.pid, "process_start_time": request.processStartTime, "window_id": (binding?.windowID ?? admission.windowID).map { $0 as Any } ?? NSNull(),
             "claim_present": binding != nil, "released": binding == nil && claimedWindowGone(admission),
             "provider_pid": getpid(), "namespace": PhoneHostDisplayPolicy.namespace, "display_id": area == nil ? 0 : displayID, "display_serial": serial,
-            "bounds": geometry(area), "window_bounds": geometry(frame), "contained": contained, "ready": contained, "persistent": true]
+            "bounds": geometry(area), "window_bounds": geometry(frame), "contained": contained, "render_pinned": renderPinned, "ready": ready, "persistent": true]
         return .text(String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self))
     }
     static let definition = ToolDefinition(name: "phone_host_display", description: "Manage only the explicitly bound SmartShadow phone host display. Requires dedicated provider configuration. No physical fallback.",

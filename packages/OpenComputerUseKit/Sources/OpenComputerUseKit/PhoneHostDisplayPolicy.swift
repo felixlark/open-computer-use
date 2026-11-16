@@ -46,6 +46,7 @@ struct PhoneHostDisplayPolicy {
     static func admitted(_ request: PhoneHostDisplayBinding, by admission: PhoneHostDisplayBinding) -> Bool {
         sameHost(request, admission) && (request.windowID == nil || request.windowID == admission.windowID)
     }
+    static func ready(contained: Bool, renderPinned: Bool) -> Bool { contained && renderPinned }
     static func enabled(document: [String: Any], namespace: String) -> Bool {
         guard namespace == self.namespace, let section = document["phoneHostDisplay"] as? [String: Any],
               let value = section["enabled"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
