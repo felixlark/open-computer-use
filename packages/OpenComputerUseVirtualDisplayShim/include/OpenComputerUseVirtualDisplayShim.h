@@ -14,6 +14,9 @@ extern "C" {
 /// 1 when the private CGVirtualDisplay classes exist on this system.
 int ocu_virtual_display_is_supported(void);
 
+/// Read the calling thread's last creation step; no display is created.
+const char *ocu_virtual_display_creation_diagnostic(void);
+
 /// Create a virtual display of `width` x `height` points at `refresh_rate` Hz.
 /// Returns the CGDirectDisplayID (0 on failure) and stores an opaque retained
 /// handle in `handle_out`; pass it to `ocu_virtual_display_destroy` to remove
